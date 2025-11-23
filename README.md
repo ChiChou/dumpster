@@ -21,9 +21,10 @@ Edit `~/.ssh/config` to add your device, for example:
 
 ```
 Host ios
+    LogLevel ERROR
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
-    ProxyCommand=inetcat 22
+    ProxyCommand inetcat 22
     User mobile
 ```
 
