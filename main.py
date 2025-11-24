@@ -8,17 +8,7 @@ import zipfile
 
 import lief
 
-
-# Source - https://stackoverflow.com/a/1094933
-# Posted by Sridhar Ratnakumar, modified by community. See post 'Timeline' for change history
-# Retrieved 2025-11-23, License - CC BY-SA 4.0
-#
-def sizeof_fmt(num, suffix="B"):
-    for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
-        if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
-        num /= 1024.0
-    return f"{num:.1f}Yi{suffix}"
+from utils import sizeof_fmt
 
 
 class Job:
@@ -119,7 +109,7 @@ class Job:
         logging.info("successfully pulled decrypted files, now creating new archive")
 
         # make a copy
-        prefix, *_ = os.path.splitext(self.filename)
+        prefix, *_ = os.path.splitext(os.path.basename(self.filename))
         out_ipa = prefix + ".decrypted.ipa"
         with zipfile.ZipFile(out_ipa, "w") as new_ipa:
             for item in self.ipa.infolist():
