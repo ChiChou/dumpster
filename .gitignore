@@ -1,5 +1,8 @@
 .dump
 
+decrypt/unfairplay
+wrapper/dumpster
+
 *.ipa
 
 # Byte-compiled / optimized / DLL files

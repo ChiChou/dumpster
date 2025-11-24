@@ -1,11 +1,11 @@
-SRC = unfairplay.c
-BIN = unfairplay
+SRC = dumpster.m
+BIN = dumpster
 
 IOS_HOST := root@ios
 TARGET_PATH := /var/jb/bin/$(BIN)
 
 ios:
-	clang -arch arm64 \
+	clang -arch arm64 -fmodules \
 	      -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path) \
 	      -miphoneos-version-min=14.0 \
 	      $(SRC) -o $(BIN)
