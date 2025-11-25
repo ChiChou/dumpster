@@ -37,6 +37,6 @@ Make sure that you can `ssh ios` without password prompt now. You need to supply
 
 Download ipa with ipatool. Then
 
-`uv run app.ipa root@ios`
+`uv run main.py app.ipa root@ios`
 
 If all goes well, the result will be in app.decrypted.ipa
