@@ -5,7 +5,7 @@ import plistlib
 import shutil
 import subprocess
 import zipfile
-
+import shlex
 import lief
 
 from utils import sizeof_fmt
@@ -77,11 +77,10 @@ class Job:
 
         bundle_path = match["Path"]
 
-        def ssh(*args):
-            subprocess.run(
-                ["ssh", host, *args],
-                check=True,
-            )
+        def ssh(*remote_argv):
+            # remote_argv: tokens for the remote command (do NOT pre-quote them)
+            remote_cmd = shlex.join(remote_argv)  # properly quotes spaces, etc.
+            subprocess.run(["ssh", host, remote_cmd], check=True)
 
         output = f"/tmp/unfairplay/{self.app}"
 
@@ -95,8 +94,8 @@ class Job:
             parent_dir = dst[: dst.rfind("/")]
 
             ssh("mkdir", "-p", parent_dir)
-            ssh("rm", "-f", dst)
-            ssh("/var/jb/bin/unfair", src, dst)
+            ssh("rm", "-rf", dst)
+            ssh("/var/jb/unfair", src, dst)
 
         tmp = ".dump"
         shutil.rmtree(tmp, ignore_errors=True)
