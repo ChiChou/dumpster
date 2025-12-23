@@ -96,7 +96,7 @@ class Job:
 
             ssh("mkdir", "-p", parent_dir)
             ssh("rm", "-f", dst)
-            ssh("/var/jb/bin/unfair", src, dst)
+            ssh("/var/jb/bin/unfairplay", src, dst)
 
         tmp = ".dump"
         shutil.rmtree(tmp, ignore_errors=True)
