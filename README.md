@@ -7,7 +7,8 @@ Project name does not matter, there are even projects called hooker or something
 
 Jailbroken iPhone
 
-Check [tweak](tweak/README.md)
+* `installd` patch [tweak](tweak/README.md)
+* `unfairplay` command [decrypt](decrypt/README.md)
 
 Server
 
