@@ -1,14 +1,20 @@
-#include <mach-o/loader.h>
 #import <Foundation/Foundation.h>
+#include <mach-o/loader.h>
 #include <sys/stat.h>
 
-@interface LSApplicationProxy
-@property (nonatomic, readonly) NSString *teamID;
-@property (nonatomic, readonly) NSString* bundleIdentifier;
-@property (nonatomic, readonly) NSString* applicationIdentifier;
-@property (nonatomic, readonly) NSURL* bundleURL;
+@interface LSApplicationProxy : NSObject
+@property(readonly) NSString *localizedName;
+@property(nonatomic, readonly) NSString *teamID;
+@property(nonatomic, readonly) NSString *bundleIdentifier;
+@property(nonatomic, readonly) NSString *applicationIdentifier;
+@property(nonatomic, readonly) NSURL *bundleURL;
 
 + (id)applicationProxyForIdentifier:(id)bundle;
+@end
+
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
+- (NSArray<LSApplicationProxy *> *)allInstalledApplications;
 @end
 
 int is_encrypted_macho(const char *path) {
@@ -37,7 +43,8 @@ int is_encrypted_macho(const char *path) {
   for (uint32_t i = 0; i < header->ncmds; i++) {
     struct load_command *cmd = (struct load_command *)(mapped + offset);
     if (cmd->cmd == LC_ENCRYPTION_INFO_64) {
-      struct encryption_info_command_64 *enc_cmd = (struct encryption_info_command_64 *)cmd;
+      struct encryption_info_command_64 *enc_cmd =
+          (struct encryption_info_command_64 *)cmd;
       if (enc_cmd->cryptid != 0) {
         munmap(mapped, s.st_size);
         close(fd);
@@ -55,30 +62,48 @@ unmap:
 cleanup:
   close(fd);
   return 0;
-
 }
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    [[NSBundle bundleWithPath:@"/System/Library/Frameworks/CoreServices.framework"] load];
+    [[NSBundle
+        bundleWithPath:@"/System/Library/Frameworks/CoreServices.framework"]
+        load];
 
     if (argc < 2) {
-      NSLog(@"Usage: %s <bundle_identifier> <output>", argv[0]);
+      NSLog(@"Usage: %s <bundle_identifier> | -l/--list", argv[0]);
       return 1;
     }
 
-    NSString *bundleIdentifier = [NSString stringWithUTF8String:argv[1]];
-    LSApplicationProxy *appProxy = [NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:bundleIdentifier];
+    NSString *firstArg = [NSString stringWithUTF8String:argv[1]];
+    if ([firstArg isEqualToString:@"-l"] ||
+        [firstArg isEqualToString:@"--list"]) {
+      id workspace =
+          [NSClassFromString(@"LSApplicationWorkspace") defaultWorkspace];
+      NSArray *apps = [workspace allInstalledApplications];
+      for (LSApplicationProxy *app in apps) {
+        if ([app respondsToSelector:@selector(bundleIdentifier)] &&
+            app.bundleIdentifier) {
+          printf("%s\n%s\n\n", app.bundleIdentifier.UTF8String, app.localizedName.UTF8String);
+        }
+      }
+      return 0;
+    }
+
+    NSString *bundleIdentifier = firstArg;
+    LSApplicationProxy *appProxy = [NSClassFromString(@"LSApplicationProxy")
+        applicationProxyForIdentifier:bundleIdentifier];
 
     if (appProxy && appProxy.bundleURL) {
       unsigned long prefix_len = strlen(appProxy.bundleURL.path.UTF8String);
       puts(appProxy.bundleURL.path.UTF8String);
 
       NSFileManager *fileManager = [NSFileManager defaultManager];
-      NSDirectoryEnumerator *enumerator = [fileManager enumeratorAtURL:appProxy.bundleURL
-                                            includingPropertiesForKeys:nil
-                                                               options:0
-                                                          errorHandler:nil];
+      NSDirectoryEnumerator *enumerator =
+          [fileManager enumeratorAtURL:appProxy.bundleURL
+              includingPropertiesForKeys:nil
+                                 options:0
+                            errorHandler:nil];
       NSMutableArray<NSString *> *filePaths = [NSMutableArray array];
       for (NSURL *fileURL in enumerator) {
         const char *path = fileURL.path.UTF8String;
@@ -87,7 +112,8 @@ int main(int argc, const char *argv[]) {
         }
       }
     } else {
-      NSLog(@"No application found for bundle identifier: %@", bundleIdentifier);
+      NSLog(@"No application found for bundle identifier: %@",
+            bundleIdentifier);
       return 1;
     }
   }
