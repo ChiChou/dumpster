@@ -1,4 +1,5 @@
 #include <Foundation/Foundation.h>
+#include <objc/runtime.h>
 #include <substrate.h>
 
 #define LOG(fmt, ...) NSLog(@"[rubberstamp] " fmt "\n", ##__VA_ARGS__)
@@ -26,6 +27,16 @@ hooked_MILoadInfoPlistWithError(NSURL *bundle, NSSet *keys, NSError **err) {
   return plist;
 }
 
+static BOOL (*orig_MIBundle_validatePluginKitMetadataWithError)(id self,
+                                                                SEL _cmd,
+                                                                NSError **error);
+static BOOL hooked_MIBundle_validatePluginKitMetadataWithError(id self,
+                                                               SEL _cmd,
+                                                               NSError **error) {
+  LOG(@"Skipping validatePluginKitMetadataWithError:");
+  return YES;
+}
+
 #pragma mark - Entry
 
 void init() {
@@ -50,6 +61,16 @@ void init() {
   if (symbol2) {
     MSHookFunction(symbol2, (void *)&hooked_MILoadInfoPlistWithError,
                    (void **)&orig_MILoadInfoPlistWithError);
+  }
+
+  Class MIBundleClass = objc_getClass("MIBundle");
+  if (MIBundleClass) {
+    MSHookMessageEx(MIBundleClass,
+                    @selector(validatePluginKitMetadataWithError:),
+                    (IMP)hooked_MIBundle_validatePluginKitMetadataWithError,
+                    (IMP *)&orig_MIBundle_validatePluginKitMetadataWithError);
+  } else {
+    LOG(@"failed to find MIBundle class");
   }
 }
 
