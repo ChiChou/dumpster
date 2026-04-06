@@ -353,12 +353,39 @@ def list_apps(dev: Device) -> None:
         print(fmt.format(*row))
 
 
+def process_ipa(dev: Device, path: str, all_binaries: bool, repack: bool) -> None:
+    ipa = zipfile.ZipFile(path, "r")
+    _, metadata = load_info_plist(ipa)
+    bundle_id = metadata["CFBundleIdentifier"]
+    version = metadata.get("CFBundleShortVersionString", "")
+
+    installed = dev.find_app(bundle_id)
+    if installed and installed.get("CFBundleShortVersionString") == version:
+        logging.info(f"{bundle_id} v{version} already installed, skipping")
+    else:
+        logging.info(f"installing {path}")
+        subprocess.run(
+            dev.idevice("ideviceinstaller", "install", path),
+            check=True,
+        )
+
+    decrypt(
+        dev,
+        bundle_id,
+        ipa=ipa,
+        all_binaries=all_binaries,
+        repack=repack,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Decrypt IPA executables on jailbroken iOS device"
     )
     parser.add_argument(
-        "target", nargs="?", help="path to .ipa file or bundle identifier"
+        "targets",
+        nargs="*",
+        help="one or more .ipa files or bundle identifiers",
     )
     parser.add_argument(
         "--no-ext",
@@ -372,6 +399,9 @@ def main() -> None:
     )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
+    parser.add_argument(
+        "-k", "--skip-errors", action="store_true", help="skip failed targets and continue"
+    )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="enable verbose logging"
     )
@@ -388,34 +418,26 @@ def main() -> None:
         list_apps(dev)
         return
 
-    if not args.target:
-        parser.error("target is required unless using -l")
+    if not args.targets:
+        parser.error("at least one target is required unless using -l")
 
-    if args.target.endswith(".ipa"):
-        ipa = zipfile.ZipFile(args.target, "r")
-        _, metadata = load_info_plist(ipa)
-        bundle_id = metadata["CFBundleIdentifier"]
-        version = metadata.get("CFBundleShortVersionString", "")
+    ipa_mode = all(os.path.isfile(t) for t in args.targets)
 
-        installed = dev.find_app(bundle_id)
-        if installed and installed.get("CFBundleShortVersionString") == version:
-            logging.info(f"{bundle_id} v{version} already installed, skipping")
-        else:
-            logging.info(f"installing {args.target}")
-            subprocess.run(
-                dev.idevice("ideviceinstaller", "install", args.target),
-                check=True,
-            )
+    failed: list[str] = []
+    for target in args.targets:
+        try:
+            if ipa_mode:
+                process_ipa(dev, target, all_binaries=not args.no_ext, repack=not args.no_repack)
+            else:
+                decrypt(dev, target, all_binaries=not args.no_ext)
+        except Exception as e:
+            logging.error(f"failed to process {target}: {e}")
+            failed.append(target)
+            if not args.skip_errors:
+                break
 
-        decrypt(
-            dev,
-            bundle_id,
-            ipa=ipa,
-            all_binaries=not args.no_ext,
-            repack=not args.no_repack,
-        )
-    else:
-        decrypt(dev, args.target, all_binaries=not args.no_ext)
+    if failed:
+        sys.exit(f"error: failed targets: {', '.join(failed)}")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
 [project]
-name = "ipacloud"
+name = "dumpster"
 version = "0.1.0"
-description = "Add your description here"
+description = "Decrypt IPA executables on jailbroken iOS devices"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = [
-    "lief>=0.17.1",
-]
+dependencies = []
+
+[project.scripts]
+dumpster = "main:main"
