@@ -1,11 +1,15 @@
 #include <assert.h>
+#include <dlfcn.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/clonefile.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,7 +31,6 @@ static int unprotect(int f, uint64_t fileoff, uint8_t *dupe, struct encryption_i
         CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL);
     if (error) {
         perror("mremap_encrypted");
-        printf("Please wait 1 second and try it again.\n");
         munmap(base, info->cryptsize);
         return 1;
     }
@@ -71,7 +74,7 @@ static uint8_t* map(const char *path, bool mutable, size_t *size, int *descripto
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        printf("Usage: %s src dest\n", argv[0]);
+        fprintf(stderr, "usage: %s src dest\n", argv[0]);
         return 1;
     }
 
@@ -133,7 +136,7 @@ int main(int argc, char* argv[]) {
         }
         if(!fileoff)
         {
-            printf("Failed to find arm64 slice.\n");
+            fprintf(stderr, "error: no arm64 slice found\n");
             return 1;
         }
     }
@@ -142,6 +145,18 @@ int main(int argc, char* argv[]) {
     assert(header->magic == MH_MAGIC_64);
     assert(header->cputype == CPU_TYPE_ARM64);
     assert(header->cpusubtype == CPU_SUBTYPE_ARM64_ALL);
+
+    // Warm up
+    if (header->filetype == MH_EXECUTE) {
+        pid_t pid;
+        char *spawn_argv[] = {argv[1], NULL};
+        if (posix_spawn(&pid, argv[1], NULL, NULL, spawn_argv, NULL) == 0) {
+            kill(pid, SIGKILL);
+            waitpid(pid, NULL, 0);
+        }
+    } else {
+        dlopen(argv[1], RTLD_LAZY | RTLD_LOCAL);
+    }
 
     uint32_t offset = sizeof(struct mach_header_64);
 
@@ -176,7 +191,7 @@ int main(int argc, char* argv[]) {
     munmap(real_dupe, real_dupe_size);
     close(f);
 
-    printf("Succeeded in decrypting the binary.\n");
+    puts(argv[2]);
 
     return 0;
 }
