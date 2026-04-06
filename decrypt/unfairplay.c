@@ -82,8 +82,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (clonefile(argv[1], argv[2], 0) == 0) {
+    if (clonefile(argv[1], argv[2], 0) != 0) {
         perror("clonefile");
+        munmap(base, base_size);
+        close(f);
         return 1;
     }
 
@@ -155,13 +157,15 @@ int main(int argc, char* argv[]) {
             // If "unprotect"'ing is successful, then change the "cryptid" so that
             // the loader does not attempt to decrypt decrypted pages.
             //
-            if (unprotect(f, fileoff, dupe, encryption_info) == 0) {
-                encryption_info = (struct encryption_info_command_64*) (dupe + offset);
-                encryption_info->cryptid = 0;
+            if (unprotect(f, fileoff, dupe, encryption_info) != 0) {
+                fprintf(stderr, "error: failed to decrypt %s\n", argv[1]);
+                munmap(real_base, real_base_size);
+                munmap(real_dupe, real_dupe_size);
+                close(f);
+                return 1;
             }
-            // There should only be ONE header present anyways, so stop after
-            // the first one.
-            //
+            encryption_info = (struct encryption_info_command_64*) (dupe + offset);
+            encryption_info->cryptid = 0;
             break;
         }
 
@@ -170,6 +174,7 @@ int main(int argc, char* argv[]) {
 
     munmap(real_base, real_base_size);
     munmap(real_dupe, real_dupe_size);
+    close(f);
 
     printf("Succeeded in decrypting the binary.\n");
 
