@@ -174,7 +174,7 @@ def filter_executables(executables, app_name, all_binaries):
     }
 
 
-def decrypt(host, bundle_id, ipa=None, udid=None, all_binaries=False):
+def decrypt(host, bundle_id, ipa=None, udid=None, all_binaries=False, repack=True):
     ensure_tool(host, "unfairplay", "decrypt")
     ensure_tool(host, "dumpster", "wrapper")
 
@@ -231,7 +231,7 @@ def decrypt(host, bundle_id, ipa=None, udid=None, all_binaries=False):
             ["scp", "-O", f"{host}:{shlex.quote(remote)}", local], check=True
         )
 
-    if not ipa:
+    if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")
         return
 
@@ -289,6 +289,7 @@ def main():
     parser.add_argument("target", nargs="?", help="path to .ipa file or bundle identifier")
     parser.add_argument("host", nargs="?", help="SSH host (e.g. root@ios)")
     parser.add_argument("--no-ext", action="store_true", help="skip extensions, only decrypt main binary and frameworks")
+    parser.add_argument("--no-repack", action="store_true", help="pull decrypted binaries without repacking into IPA")
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID for ideviceinstaller")
     parser.add_argument(
@@ -324,7 +325,8 @@ def main():
                 check=True,
             )
 
-        decrypt(args.host, bundle_id, ipa=ipa, udid=args.udid, all_binaries=not args.no_ext)
+        decrypt(args.host, bundle_id, ipa=ipa, udid=args.udid,
+                all_binaries=not args.no_ext, repack=not args.no_repack)
     else:
         decrypt(args.host, args.target, udid=args.udid, all_binaries=not args.no_ext)
 
