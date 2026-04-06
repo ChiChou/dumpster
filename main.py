@@ -231,6 +231,13 @@ def decrypt(host, bundle_id, ipa=None, udid=None, all_binaries=False, repack=Tru
             ["scp", "-O", f"{host}:{shlex.quote(remote)}", local], check=True
         )
 
+    # pull Info.plist for context
+    plist_remote = f"{bundle_path}/Info.plist"
+    plist_local = os.path.join(outdir, app_name, "Info.plist")
+    subprocess.run(
+        ["scp", "-O", f"{host}:{shlex.quote(plist_remote)}", plist_local], check=True
+    )
+
     if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")
         return
