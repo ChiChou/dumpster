@@ -3,29 +3,21 @@ revision = 3
 requires-python = ">=3.14"
 
 [[package]]
-name = "ipacloud"
+name = "dumpster"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
-    { name = "lief" },
+    { name = "setuptools" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lief", specifier = ">=0.17.1" }]
+requires-dist = [{ name = "setuptools", specifier = ">=82.0.1" }]
 
 [[package]]
-name = "lief"
-version = "0.17.1"
+name = "setuptools"
+version = "82.0.1"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d1c111714410d2fbb77ac5a616db26775db562c8fab2/setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9", size = 1152316, upload-time = "2026-03-09T12:47:17.221Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/37/5061da652816cfdecb0380a0e9722c8c12586d0182e8704d93b414461619/lief-0.17.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:94505d03c63f68a2f740b72e87ae4fc80eff7c5e63c7d09582535888ef676d5c", size = 3000314, upload-time = "2025-10-25T13:15:40.56Z" },
-    { url = "https://files.pythonhosted.org/packages/1e/bb/0486aaebdaea9971b96d7c3aa1f7d566243ad9511a1fb735d08b8b2717ed/lief-0.17.1-cp314-cp314-macosx_11_0_x86_64.whl", hash = "sha256:9198f88d3e168dda0c2891f6c343fc2936f8245139ea09683d2726a1b920bdb5", size = 3108946, upload-time = "2025-10-25T13:15:42.014Z" },
-    { url = "https://files.pythonhosted.org/packages/97/33/7b2c4c281ef50c73b930fcc62c6b0d7b59f2e7626384b0f481bd47969ac0/lief-0.17.1-cp314-cp314-manylinux2014_aarch64.whl", hash = "sha256:54de530262d7dad925523102bfdbc2ead26aa5ba8819e539ac7373a4ba8868c5", size = 3674227, upload-time = "2025-10-25T13:15:43.851Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/1b/856c810b58ae0ec1bb70528a7bd0de948ee305aac65279983f9c90b36bb9/lief-0.17.1-cp314-cp314-manylinux_2_28_i686.whl", hash = "sha256:203019139646cd2be6a43e0f216b1463af2f6cb00c4c8006ccf6c62cb2aa2eda", size = 3501777, upload-time = "2025-10-25T13:15:45.262Z" },
-    { url = "https://files.pythonhosted.org/packages/40/db/44ace7c9ee3fb04a4a9fbdb238e3254d5a6e18a4b062d7e7825407ae4d5b/lief-0.17.1-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:50864f0c57a5702849c662d01c80b1ec030a92867beffb977d264f46fd658c06", size = 3406898, upload-time = "2025-10-25T13:15:47.651Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/2e/af4858319460901f2383633e16c027361a8af5b5997b8f56fdf06656916a/lief-0.17.1-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:616b8eb51f9205a1bc90945487040522573306bfd7a4d0b8f838b61ff060b1a2", size = 3591598, upload-time = "2025-10-25T13:15:49.485Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/ba/3d243e001450aafbfbe9271e7065662de2cee4a621109227fa06331d7c11/lief-0.17.1-cp314-cp314-musllinux_1_2_i686.whl", hash = "sha256:770c9fc5852050f3ff5f08d9a702d228114aa27a8385f1d72e2497b73fdecb27", size = 3958244, upload-time = "2025-10-25T13:15:51.288Z" },
-    { url = "https://files.pythonhosted.org/packages/be/14/328481f91545f6efa22ca04ef6bc6078447d199c42c752b07ae0c65eda96/lief-0.17.1-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:f73391aaf3848b81ed130928cba06a239d225de590be1e067701e05fd0b33aae", size = 3707511, upload-time = "2025-10-25T13:15:53.053Z" },
-    { url = "https://files.pythonhosted.org/packages/8f/e5/a5452e109c6a55deaa73a49c34130980d99debabe3f37b8d86b67b2fb382/lief-0.17.1-cp314-cp314-win32.whl", hash = "sha256:f610d5937df9de86962733673f1a2b5255931c50b004e614728e83cbb0620057", size = 3459541, upload-time = "2025-10-25T13:15:54.877Z" },
-    { url = "https://files.pythonhosted.org/packages/7f/d0/b4c959a340dd391df1f6b4c2958920f9272bc45b6b45f8af657b9377e09b/lief-0.17.1-cp314-cp314-win_amd64.whl", hash = "sha256:3dadb33cad8cf01d78a5eb12fb660ed1a06619f0baade38b606fd151e87436e2", size = 3637731, upload-time = "2025-10-25T13:15:56.644Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/76/f789f7a86709c6b087c5a2f52f911838cad707cc613162401badc665acfe/setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", size = 1006223, upload-time = "2026-03-09T12:47:15.026Z" },
 ]

@@ -4,10 +4,21 @@ version = "0.1.0"
 description = "Decrypt IPA executables on jailbroken iOS devices"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "setuptools>=82.0.1",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["main"]
+packages = ["ios_tools"]
+
+[tool.setuptools.package-data]
+ios_tools = ["decrypt/*", "wrapper/*"]
 
 [project.scripts]
 dumpster = "main:main"
+dumpster-repack = "main:repack_main"

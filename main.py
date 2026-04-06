@@ -12,6 +12,13 @@ import sys
 import zipfile
 
 
+def _find_data_file(build_dir: str, name: str) -> str:
+    """Locate a bundled iOS binary from the installed ios_tools package."""
+    import ios_tools
+
+    return ios_tools.get(build_dir, name)
+
+
 class MachO:
     MH_MAGIC = 0xFEEDFACE
     MH_MAGIC_64 = 0xFEEDFACF
@@ -112,10 +119,48 @@ class FatBinary(MachO):
         return results
 
 
+def repack_ipa(
+    ipa: zipfile.ZipFile, dumpdir: str, replacements: set[str] | None = None
+) -> str:
+    """Repack an IPA, substituting decrypted binaries from dumpdir.
+
+    If replacements is None, auto-detect by scanning dumpdir for Mach-O files.
+    Returns the path to the output IPA.
+    """
+    if replacements is None:
+        replacements = set()
+        for root, _, files in os.walk(dumpdir):
+            for name in files:
+                path = os.path.join(root, name)
+                with open(path, "rb") as f:
+                    header = f.read(4)
+                if MachO.is_macho(header):
+                    replacements.add(os.path.relpath(path, dumpdir))
+
+    assert ipa.filename is not None
+    prefix, *_ = os.path.splitext(os.path.basename(ipa.filename))
+    out_ipa = os.path.join(dumpdir, prefix + ".decrypted.ipa")
+
+    logging.info("creating decrypted archive")
+    with zipfile.ZipFile(out_ipa, "w") as new_ipa:
+        for item in ipa.infolist():
+            filename = item.filename[len("Payload/") :]
+            if filename in replacements:
+                with open(os.path.join(dumpdir, filename), "rb") as f:
+                    data = f.read()
+            else:
+                with ipa.open(item) as f:
+                    data = f.read()
+            new_ipa.writestr(item, data)
+
+    logging.info(f"decrypted IPA saved to {out_ipa}")
+    return out_ipa
+
+
 def load_info_plist(ipa: zipfile.ZipFile) -> tuple[str, dict]:
     for zi in ipa.filelist:
-        segments = zi.filename.split("/", 3)
-        if len(segments) < 3:
+        segments = zi.filename.split("/")
+        if len(segments) != 3:
             continue
 
         payload, app, info_plist = segments
@@ -191,13 +236,12 @@ class Device:
         result = self.ssh("test", "-x", f"/var/jb/bin/{name}", check=False)
         if result.returncode == 0:
             return
-        logging.info(f"{name} not found on device, building and deploying")
-        subprocess.run(["make", "-C", build_dir, "ios"], check=True)
-        self.push(
-            os.path.join(build_dir, name),
-            os.path.join(build_dir, "ent.xml"),
-            remote="/tmp/",
-        )
+        logging.info(f"{name} not found on device, deploying")
+
+        binary = _find_data_file(build_dir, name)
+        entxml = _find_data_file(build_dir, "ent.xml")
+        self.push(binary, entxml, remote="/tmp/")
+
         target = f"/var/jb/bin/{name}"
         self.ssh(
             "mv",
@@ -234,12 +278,59 @@ def filter_executables(
     return {f for f in executables if f.startswith(prefix) or f.count("/") == 1}
 
 
+def list_codesign_identities() -> list[str]:
+    """Return available signing identities from the macOS keychain."""
+    result = subprocess.run(
+        ["security", "find-identity", "-v", "-p", "codesigning"],
+        capture_output=True,
+        text=True,
+    )
+    identities: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        # lines look like:  1) HASH "Name"
+        if '"' in line:
+            name = line.split('"')[1]
+            identities.append(name)
+    return identities
+
+
+def codesign_binaries(outdir: str, mode: str, identity: str | None = None) -> None:
+    """Run codesign on all Mach-O files in outdir. macOS only.
+
+    mode: 'strip' to remove signatures, 'resign' to ad-hoc sign,
+          'sign' to sign with a specific identity.
+    """
+    if sys.platform != "darwin":
+        logging.warning("codesign is only available on macOS, skipping")
+        return
+
+    for root, _, files in os.walk(outdir):
+        for name in files:
+            path = os.path.join(root, name)
+            with open(path, "rb") as f:
+                header = f.read(4)
+            if not MachO.is_macho(header):
+                continue
+            if mode == "strip":
+                logging.info(f"stripping code signature: {path}")
+                subprocess.run(["codesign", "--remove-signature", path], check=True)
+            elif mode == "resign":
+                logging.info(f"ad-hoc signing: {path}")
+                subprocess.run(["codesign", "-f", "-s", "-", path], check=True)
+            elif mode == "sign":
+                assert identity is not None, "identity must be provided for signing"
+                logging.info(f"signing with '{identity}': {path}")
+                subprocess.run(["codesign", "-f", "-s", identity, path], check=True)
+
+
 def decrypt(
     dev: Device,
     bundle_id: str,
     ipa: zipfile.ZipFile | None = None,
     all_binaries: bool = False,
     repack: bool = True,
+    codesign_mode: str | None = None,
+    codesign_identity: str | None = None,
 ) -> None:
     dev.ensure_tool("unfairplay", "decrypt")
     dev.ensure_tool("dumpster", "wrapper")
@@ -299,27 +390,14 @@ def decrypt(
     plist_local = os.path.join(outdir, app_name, "Info.plist")
     dev.pull(f"{bundle_path}/Info.plist", plist_local)
 
+    if codesign_mode:
+        codesign_binaries(outdir, codesign_mode, identity=codesign_identity)
+
     if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")
         return
 
-    logging.info("creating decrypted archive")
-
-    assert ipa.filename is not None
-    prefix, *_ = os.path.splitext(os.path.basename(ipa.filename))
-    out_ipa = os.path.join(outdir, prefix + ".decrypted.ipa")
-    with zipfile.ZipFile(out_ipa, "w") as new_ipa:
-        for item in ipa.infolist():
-            filename = item.filename[len("Payload/") :]
-            if filename in decrypted:
-                with open(os.path.join(outdir, filename), "rb") as f:
-                    data = f.read()
-            else:
-                with ipa.open(item) as f:
-                    data = f.read()
-            new_ipa.writestr(item, data)
-
-    logging.info(f"decrypted IPA saved to {out_ipa}")
+    repack_ipa(ipa, outdir, decrypted)
 
 
 def list_apps(dev: Device) -> None:
@@ -353,7 +431,14 @@ def list_apps(dev: Device) -> None:
         print(fmt.format(*row))
 
 
-def process_ipa(dev: Device, path: str, all_binaries: bool, repack: bool) -> None:
+def process_ipa(
+    dev: Device,
+    path: str,
+    all_binaries: bool,
+    repack: bool,
+    codesign_mode: str | None = None,
+    codesign_identity: str | None = None,
+) -> None:
     ipa = zipfile.ZipFile(path, "r")
     _, metadata = load_info_plist(ipa)
     bundle_id = metadata["CFBundleIdentifier"]
@@ -375,6 +460,8 @@ def process_ipa(dev: Device, path: str, all_binaries: bool, repack: bool) -> Non
         ipa=ipa,
         all_binaries=all_binaries,
         repack=repack,
+        codesign_mode=codesign_mode,
+        codesign_identity=codesign_identity,
     )
 
 
@@ -399,8 +486,27 @@ def main() -> None:
     )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
+    codesign_group = parser.add_mutually_exclusive_group()
+    codesign_group.add_argument(
+        "--strip-codesign",
+        action="store_true",
+        help="strip code signatures from pulled binaries (macOS only)",
+    )
+    codesign_group.add_argument(
+        "--resign",
+        action="store_true",
+        help="ad-hoc re-sign pulled binaries with codesign (macOS only)",
+    )
+    codesign_group.add_argument(
+        "--sign",
+        metavar="IDENTITY",
+        help="sign pulled binaries with a developer identity (macOS only, use 'list' to show available identities)",
+    )
     parser.add_argument(
-        "-k", "--skip-errors", action="store_true", help="skip failed targets and continue"
+        "-k",
+        "--skip-errors",
+        action="store_true",
+        help="skip failed targets and continue",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="enable verbose logging"
@@ -421,15 +527,47 @@ def main() -> None:
     if not args.targets:
         parser.error("at least one target is required unless using -l")
 
+    if args.sign == "list":
+        if sys.platform != "darwin":
+            sys.exit("error: codesign is only available on macOS")
+        identities = list_codesign_identities()
+        if not identities:
+            sys.exit("error: no codesigning identities found in keychain")
+        for ident in identities:
+            print(ident)
+        return
+
+    if args.strip_codesign:
+        codesign_mode: str | None = "strip"
+    elif args.resign:
+        codesign_mode = "resign"
+    elif args.sign:
+        codesign_mode = "sign"
+    else:
+        codesign_mode = None
+
     ipa_mode = all(os.path.isfile(t) for t in args.targets)
 
     failed: list[str] = []
     for target in args.targets:
         try:
             if ipa_mode:
-                process_ipa(dev, target, all_binaries=not args.no_ext, repack=not args.no_repack)
+                process_ipa(
+                    dev,
+                    target,
+                    all_binaries=not args.no_ext,
+                    repack=not args.no_repack,
+                    codesign_mode=codesign_mode,
+                    codesign_identity=args.sign,
+                )
             else:
-                decrypt(dev, target, all_binaries=not args.no_ext)
+                decrypt(
+                    dev,
+                    target,
+                    all_binaries=not args.no_ext,
+                    codesign_mode=codesign_mode,
+                    codesign_identity=args.sign,
+                )
         except Exception as e:
             logging.error(f"failed to process {target}: {e}")
             failed.append(target)
@@ -438,6 +576,38 @@ def main() -> None:
 
     if failed:
         sys.exit(f"error: failed targets: {', '.join(failed)}")
+
+
+def repack_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Repack IPA with decrypted binaries from dump directory"
+    )
+    parser.add_argument("ipa", nargs="+", help="original .ipa file(s)")
+    parser.add_argument(
+        "-d",
+        "--dump-dir",
+        default="dump",
+        help="base dump directory (default: dump/)",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="enable verbose logging"
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(message)s",
+    )
+
+    for path in args.ipa:
+        ipa = zipfile.ZipFile(path, "r")
+        _, metadata = load_info_plist(ipa)
+        bundle_id = metadata["CFBundleIdentifier"]
+        outdir = os.path.join(args.dump_dir, bundle_id)
+        if not os.path.isdir(outdir):
+            logging.error(f"no dump found for {bundle_id} at {outdir}, skipping")
+            continue
+        repack_ipa(ipa, outdir)
 
 
 if __name__ == "__main__":

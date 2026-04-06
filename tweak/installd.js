@@ -101,3 +101,66 @@ validationHooks.forEach(([className, selName, errArgIdx]) => {
 
   console.log(`Hooked -[${className} ${selName.slice(2)}]`);
 });
+
+// Disable code signing enforcement — makes the verifier set allowAdhocSigning:YES,
+// verifyTrustCachePresence:NO, validateUsingDetachedSignature:NO
+const cseMethod =
+  ObjC.classes.MIDaemonConfiguration["- codeSigningEnforcementIsDisabled"];
+if (cseMethod) {
+  Interceptor.attach(cseMethod.implementation, {
+    onLeave(retval) {
+      retval.replace(ptr(1));
+    },
+  });
+  console.log("Hooked -[MIDaemonConfiguration codeSigningEnforcementIsDisabled]");
+}
+
+// Code signature verification bypass.
+// performValidationWithError: on device calls libmis and may fail.
+// When it fails, the caller reads [verifier signingInfo] which is nil, causing
+// "MismatchedBundleIDSigningIdentifier" downstream (null codeInfoIdentifier).
+// Fix: hook performValidationWithError: to create fake signing info (like the simulator stub)
+// with codeInfoIdentifier = bundle identifier, then set it on the verifier.
+const perfValMethod =
+  ObjC.classes.MICodeSigningVerifier["- performValidationWithError:"];
+if (perfValMethod) {
+  Interceptor.attach(perfValMethod.implementation, {
+    onEnter(args) {
+      this.self = new ObjC.Object(args[0]);
+      this.errPtr = args[2];
+    },
+    onLeave(retval) {
+      if (!retval.toInt32()) {
+        // Verification failed — fabricate signing info like the simulator stub
+        const verifier = this.self;
+        const bundle = verifier.bundle();
+        const bundleId = bundle.identifier();
+
+        const sigInfo = ObjC.classes.MICodeSigningInfo.alloc()
+          .initWithSignerIdentity_signerOrganization_codeInfoIdentifier_teamIdentifier_signatureVersion_entitlements_signerType_profileType_signingInfoSource_launchWarningData_(
+            ObjC.classes.NSString.stringWithString_("Apple iPhone OS Application Signing"),
+            ObjC.classes.NSString.stringWithString_("Apple Inc."),
+            bundleId,
+            ObjC.classes.NSString.stringWithString_("FAKETEAMID"),
+            ObjC.classes.NSString.stringWithString_("1"),
+            NULL,
+            2, // signerType
+            1, // profileType
+            1, // signingInfoSource
+            NULL,
+          );
+
+        // Set _signingInfo on the verifier so the caller can read it
+        verifier.setValue_forKey_(sigInfo, ObjC.classes.NSString.stringWithString_("signingInfo"));
+
+        retval.replace(ptr(1));
+        if (!this.errPtr.isNull()) {
+          this.errPtr.writePointer(ptr(0));
+        }
+
+        console.log(`Fabricated signing info for ${bundleId}`);
+      }
+    },
+  });
+  console.log("Hooked -[MICodeSigningVerifier performValidationWithError:]");
+}
