@@ -27,17 +27,26 @@ hooked_MILoadInfoPlistWithError(NSURL *bundle, NSSet *keys, NSError **err) {
   return plist;
 }
 
-static BOOL (*orig_MIBundle_validatePluginKitMetadataWithError)(id self,
-                                                                SEL _cmd,
-                                                                NSError **error);
-static BOOL hooked_MIBundle_validatePluginKitMetadataWithError(id self,
-                                                               SEL _cmd,
-                                                               NSError **error) {
-  LOG(@"Skipping validatePluginKitMetadataWithError:");
+// Generic validation bypass — always returns YES and clears the error out-param
+static BOOL hooked_validatePass(id self, SEL _cmd, NSError **err) {
+  if (err)
+    *err = nil;
   return YES;
 }
 
 #pragma mark - Entry
+
+static void hookValidation(Class cls, SEL sel, IMP replacement) {
+  if (!cls)
+    return;
+  Method m = class_getInstanceMethod(cls, sel);
+  if (!m) {
+    LOG(@"method %s not found on %s", sel_getName(sel), class_getName(cls));
+    return;
+  }
+  method_setImplementation(m, replacement);
+  LOG(@"hooked %s on %s", sel_getName(sel), class_getName(cls));
+}
 
 void init() {
   LOG(@"loaded in installd (%d)", getpid());
@@ -63,15 +72,23 @@ void init() {
                    (void **)&orig_MILoadInfoPlistWithError);
   }
 
-  Class MIBundleClass = objc_getClass("MIBundle");
-  if (MIBundleClass) {
-    MSHookMessageEx(MIBundleClass,
-                    @selector(validatePluginKitMetadataWithError:),
-                    (IMP)hooked_MIBundle_validatePluginKitMetadataWithError,
-                    (IMP *)&orig_MIBundle_validatePluginKitMetadataWithError);
-  } else {
-    LOG(@"failed to find MIBundle class");
-  }
+  // Bypass bundle validation — minimum kill switch (3 hooks).
+  // See report.md for the full call tree and rationale.
+  Class MIBundle = objc_getClass("MIBundle");
+  Class MIPluginKitBundle = objc_getClass("MIPluginKitBundle");
+  Class MIExtensionKitBundle = objc_getClass("MIExtensionKitBundle");
+
+  // Covers _validateNSExtension + _validateXPCService (user's error)
+  hookValidation(MIPluginKitBundle,
+                 @selector(validateBundleMetadataWithError:),
+                 (IMP)hooked_validatePass);
+  // Covers ExtensionKit delegate class + Swift entry checks
+  hookValidation(MIExtensionKitBundle,
+                 @selector(validateBundleMetadataWithError:),
+                 (IMP)hooked_validatePass);
+  // Covers loop-level checks (duplicates, WatchKit constraints)
+  hookValidation(MIBundle, @selector(validatePluginKitMetadataWithError:),
+                 (IMP)hooked_validatePass);
 }
 
 void sanitize(NSMutableDictionary *plist) {
