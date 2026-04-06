@@ -162,7 +162,19 @@ def find_app(bundle_id, udid=None):
     return None
 
 
-def decrypt(host, bundle_id, ipa=None, udid=None):
+def filter_executables(executables, app_name, all_binaries):
+    if all_binaries:
+        return executables
+    # main binary + Frameworks/ only
+    prefix = f"{app_name}/Frameworks/"
+    main = f"{app_name}/"
+    return {
+        f for f in executables
+        if f.startswith(prefix) or f.count("/") == 1
+    }
+
+
+def decrypt(host, bundle_id, ipa=None, udid=None, all_binaries=False):
     ensure_tool(host, "unfairplay", "decrypt")
     ensure_tool(host, "dumpster", "wrapper")
 
@@ -180,6 +192,8 @@ def decrypt(host, bundle_id, ipa=None, udid=None):
         lines = result.stdout.decode().strip().splitlines()
         # first line is bundle path, rest are relative encrypted binary paths
         executables = {f"{app_name}/{l}" for l in lines[1:] if l}
+
+    executables = filter_executables(executables, app_name, all_binaries)
 
     output = f"/var/mobile/unfairplay/{app_name}"
     decrypted = set()
@@ -204,32 +218,32 @@ def decrypt(host, bundle_id, ipa=None, udid=None):
     if not decrypted:
         sys.exit("error: no binaries were decrypted")
 
-    tmp = ".dump"
-    shutil.rmtree(tmp, ignore_errors=True)
-    os.makedirs(tmp, exist_ok=True)
+    outdir = os.path.join("dump", bundle_id)
+    shutil.rmtree(outdir, ignore_errors=True)
+    os.makedirs(outdir, exist_ok=True)
 
     for filename in decrypted:
         tail = "/".join(filename.split("/")[1:])
         remote = f"{output}/{tail}"
-        local = os.path.join(tmp, filename)
+        local = os.path.join(outdir, filename)
         os.makedirs(os.path.dirname(local), exist_ok=True)
         subprocess.run(
             ["scp", "-O", f"{host}:{shlex.quote(remote)}", local], check=True
         )
 
     if not ipa:
-        logging.info(f"decrypted binaries saved to {tmp}/{app_name}")
+        logging.info(f"decrypted binaries saved to {outdir}")
         return
 
     logging.info("creating decrypted archive")
 
     prefix, *_ = os.path.splitext(os.path.basename(ipa.filename))
-    out_ipa = prefix + ".decrypted.ipa"
+    out_ipa = os.path.join(outdir, prefix + ".decrypted.ipa")
     with zipfile.ZipFile(out_ipa, "w") as new_ipa:
         for item in ipa.infolist():
             filename = item.filename[len("Payload/") :]
             if filename in decrypted:
-                with open(os.path.join(tmp, filename), "rb") as f:
+                with open(os.path.join(outdir, filename), "rb") as f:
                     data = f.read()
             else:
                 with ipa.open(item) as f:
@@ -274,6 +288,7 @@ def main():
     )
     parser.add_argument("target", nargs="?", help="path to .ipa file or bundle identifier")
     parser.add_argument("host", nargs="?", help="SSH host (e.g. root@ios)")
+    parser.add_argument("--no-ext", action="store_true", help="skip extensions, only decrypt main binary and frameworks")
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID for ideviceinstaller")
     parser.add_argument(
@@ -309,9 +324,9 @@ def main():
                 check=True,
             )
 
-        decrypt(args.host, bundle_id, ipa=ipa, udid=args.udid)
+        decrypt(args.host, bundle_id, ipa=ipa, udid=args.udid, all_binaries=not args.no_ext)
     else:
-        decrypt(args.host, args.target, udid=args.udid)
+        decrypt(args.host, args.target, udid=args.udid, all_binaries=not args.no_ext)
 
 
 if __name__ == "__main__":
