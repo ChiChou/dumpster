@@ -88,7 +88,21 @@ Specify device UDID when multiple devices are connected:
 dumpster -u DEVICE_UDID com.example.app
 ```
 
-Decrypted output is saved to `dump/<bundle_id>/`.
+Decrypted output is saved to `dump/<bundle_id>/`. Binaries are always kept regardless of repacking.
+
+### Repack separately
+
+If you decrypted with `--no-repack` (or just want to repack again after modifying binaries), use `dumpster-repack`:
+
+```
+dumpster-repack app.ipa
+```
+
+It reads the original IPA, substitutes any Mach-O files found in `dump/<bundle_id>/`, and writes a `.decrypted.ipa`. Use `-d` to point to a different dump directory:
+
+```
+dumpster-repack -d /path/to/dump app.ipa
+```
 
 ## SSH Setup
 
