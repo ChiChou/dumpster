@@ -1,43 +1,97 @@
 # dumpster
 
-Glue project to build your IPA decryptor workflow. 
-Project name does not matter, there are even projects called hooker or something.
+Decrypt IPA executables on jailbroken iOS devices.
 
 ## Prerequisites
 
 Jailbroken iPhone
 
 * `installd` patch [tweak](tweak/README.md)
-* `unfairplay` command [decrypt](decrypt/README.md)
+* `unfairplay` decryptor [decrypt](decrypt/README.md)
+* `dumpster` wrapper [wrapper](wrapper/) — deployed automatically on first run
 
 Server
 
-* [ipatool](https://github.com/majd/ipatool)
-* [libimobiledevice](https://libimobiledevice.org/)
-* [ideviceinstaller](https://github.com/libimobiledevice/ideviceinstaller)
-* Python and [uv](https://docs.astral.sh/uv/)
+* [libimobiledevice](https://libimobiledevice.org/) and [ideviceinstaller](https://github.com/libimobiledevice/ideviceinstaller)
+* [ipatool](https://github.com/majd/ipatool) (to download IPAs from App Store)
+* Python 3.14+ and [uv](https://docs.astral.sh/uv/)
 
-## Set Up SSH
-
-Edit `~/.ssh/config` to add your device, for example:
+## Install
 
 ```
-Host ios
-    LogLevel ERROR
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-    ProxyCommand inetcat 22
-    User mobile
+uv tool install .
 ```
 
-You can add `--udid` to inetcat parameters if you have multiple devices.
+This installs the `dumpster` command to `~/.local/bin/` (make sure it's in your `$PATH`).
 
-Make sure that you can `ssh ios` without password prompt now. You need to supply this "ios" as host name param to the script.
+To install in development mode:
 
-## Workflow
+```
+uv tool install -e .
+```
 
-Download ipa with ipatool. Then
+To uninstall:
 
-`uv run main.py app.ipa root@ios`
+```
+uv tool uninstall dumpster
+```
 
-If all goes well, the result will be in app.decrypted.ipa
+## Usage
+
+List installed apps on the connected device:
+
+```
+dumpster -l
+```
+
+Decrypt a single app by bundle ID:
+
+```
+dumpster com.example.app
+```
+
+Batch decrypt multiple bundle IDs:
+
+```
+dumpster com.example.app1 com.example.app2 com.example.app3
+```
+
+Decrypt from IPA files (installs if needed, then decrypts and repacks):
+
+```
+dumpster app1.ipa app2.ipa
+```
+
+If all targets are existing files they are treated as IPAs, otherwise as bundle IDs.
+
+Pull decrypted binaries without repacking into IPA:
+
+```
+dumpster --no-repack app.ipa
+```
+
+Skip extensions, only decrypt main binary and frameworks:
+
+```
+dumpster --no-ext com.example.app
+```
+
+Skip failed targets and continue with the rest:
+
+```
+dumpster -k com.example.app1 com.example.app2
+```
+
+Specify device UDID when multiple devices are connected:
+
+```
+dumpster -u DEVICE_UDID com.example.app
+```
+
+Decrypted output is saved to `dump/<bundle_id>/`.
+
+## SSH Setup
+
+The tool connects to the device via USB using `inetcat`. No SSH config is needed — it handles the proxy command internally.
+
+If you have multiple devices, pass `--udid` / `-u` to select one.
