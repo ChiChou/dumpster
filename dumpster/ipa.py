@@ -62,7 +62,7 @@ def encrypted_machos(ipa: zipfile.ZipFile) -> list[str]:
         if binary is None:
             continue
         for info in binary.encryption_info():
-            if info["cryptid"]:
+            if info.cryptid:
                 results.append(zi.filename[len("Payload/") :])
                 break
     return results
