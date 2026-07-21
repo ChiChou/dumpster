@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import os
 import plistlib
@@ -9,6 +10,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 
@@ -151,13 +153,16 @@ def repack_ipa(
             else:
                 with ipa.open(item) as f:
                     data = f.read()
-            new_ipa.writestr(item, data)
+            # writestr mutates the ZipInfo; pass a copy so the source
+            # archive stays readable afterwards
+            new_ipa.writestr(copy.copy(item), data)
 
     logging.info(f"decrypted IPA saved to {out_ipa}")
     return out_ipa
 
 
-def load_info_plist(ipa: zipfile.ZipFile) -> tuple[str, dict]:
+def main_app_path(ipa: zipfile.ZipFile) -> str:
+    """Return the path of the main .app bundle inside the IPA."""
     for zi in ipa.filelist:
         segments = zi.filename.split("/")
         if len(segments) != 3:
@@ -165,9 +170,14 @@ def load_info_plist(ipa: zipfile.ZipFile) -> tuple[str, dict]:
 
         payload, app, info_plist = segments
         if payload == "Payload" and info_plist == "Info.plist" and app.endswith(".app"):
-            with ipa.open(zi) as o:
-                return app, plistlib.loads(o.read())
-    raise RuntimeError("Info.plist not found in IPA")
+            return f"{payload}/{app}"
+    raise RuntimeError("main .app not found in IPA")
+
+
+def load_info_plist(ipa: zipfile.ZipFile) -> tuple[str, dict]:
+    app_path = main_app_path(ipa)
+    with ipa.open(f"{app_path}/Info.plist") as o:
+        return os.path.basename(app_path), plistlib.loads(o.read())
 
 
 def encrypted_machos(ipa: zipfile.ZipFile) -> list[str]:
@@ -431,6 +441,38 @@ def list_apps(dev: Device) -> None:
         print(fmt.format(*row))
 
 
+def strip_watch_app(ipa: zipfile.ZipFile) -> str | None:
+    """Write a copy of the IPA without the bundled Watch app.
+
+    Returns the path to the temporary copy, or None if the IPA
+    has no Watch app to strip.
+    """
+    watch_prefix = f"{main_app_path(ipa)}/Watch/"
+    if not any(item.filename.startswith(watch_prefix) for item in ipa.infolist()):
+        return None
+
+    fd, copy_path = tempfile.mkstemp(suffix=".ipa")
+    os.close(fd)
+    logging.info(f"stripping bundled Watch app into {copy_path}")
+
+    if shutil.which("zip"):
+        # zip -d is much faster than re-writing the archive in Python
+        assert ipa.filename is not None
+        shutil.copy(ipa.filename, copy_path)
+        subprocess.run(["zip", "-dq", copy_path, f"{watch_prefix}*"], check=True)
+    else:
+        with zipfile.ZipFile(copy_path, "w") as out:
+            for item in ipa.infolist():
+                if item.filename.startswith(watch_prefix):
+                    continue
+                with ipa.open(item) as f:
+                    data = f.read()
+                # writestr mutates the ZipInfo; pass a copy so the source
+                # archive stays readable afterwards
+                out.writestr(copy.copy(item), data)
+    return copy_path
+
+
 def process_ipa(
     dev: Device,
     path: str,
@@ -449,10 +491,15 @@ def process_ipa(
         logging.info(f"{bundle_id} v{version} already installed, skipping")
     else:
         logging.info(f"installing {path}")
-        subprocess.run(
-            dev.idevice("ideviceinstaller", "install", path),
-            check=True,
-        )
+        stripped = strip_watch_app(ipa)
+        try:
+            subprocess.run(
+                dev.idevice("ideviceinstaller", "install", stripped or path),
+                check=True,
+            )
+        finally:
+            if stripped:
+                os.remove(stripped)
 
     decrypt(
         dev,
