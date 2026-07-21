@@ -74,6 +74,7 @@ def repack_ipa(
     """Repack an IPA, substituting decrypted binaries from dumpdir.
 
     If replacements is None, auto-detect by scanning dumpdir for Mach-O files.
+    The bundled Watch app is excluded from the output.
     Returns the path to the output IPA.
     """
     if replacements is None:
@@ -91,8 +92,11 @@ def repack_ipa(
     out_ipa = os.path.join(dumpdir, prefix + ".decrypted.ipa")
 
     logging.info("creating decrypted archive")
+    watch_prefix = f"{main_app_path(ipa)}/Watch/"
     with zipfile.ZipFile(out_ipa, "w") as new_ipa:
         for item in ipa.infolist():
+            if item.filename.startswith(watch_prefix):
+                continue
             filename = item.filename[len("Payload/") :]
             if filename in replacements:
                 with open(os.path.join(dumpdir, filename), "rb") as f:

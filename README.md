@@ -99,7 +99,7 @@ If you decrypted with `--no-repack` (or just want to repack again after modifyin
 dumpster-repack app.ipa
 ```
 
-It reads the original IPA, substitutes any Mach-O files found in `dump/<bundle_id>/`, and writes a `.decrypted.ipa`. Use `-d` to point to a different dump directory:
+It reads the original IPA, substitutes any Mach-O files found in `dump/<bundle_id>/`, and writes a `.decrypted.ipa`. The bundled Watch app is excluded from the repacked IPA. Use `-d` to point to a different dump directory:
 
 ```
 dumpster-repack -d /path/to/dump app.ipa
