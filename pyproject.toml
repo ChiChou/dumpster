@@ -13,12 +13,11 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main"]
-packages = ["ios_tools"]
+packages = ["dumpster", "ios_tools"]
 
 [tool.setuptools.package-data]
 ios_tools = ["decrypt/*", "wrapper/*"]
 
 [project.scripts]
-dumpster = "main:main"
-dumpster-repack = "main:repack_main"
+dumpster = "dumpster.cli:main"
+dumpster-repack = "dumpster.cli:repack_main"
