@@ -12,6 +12,7 @@ Jailbroken iPhone
 
 Server
 
+* macOS (uses `codesign` and `zip`)
 * [libimobiledevice](https://libimobiledevice.org/) and [ideviceinstaller](https://github.com/libimobiledevice/ideviceinstaller)
 * [ipatool](https://github.com/majd/ipatool) (to download IPAs from App Store)
 * Python 3.14+ and [uv](https://docs.astral.sh/uv/)
