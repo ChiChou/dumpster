@@ -70,6 +70,11 @@ const validationHooks = [
   ["MIPluginKitBundle", "- validateBundleMetadataWithError:", 0],
   ["MIExtensionKitBundle", "- validateBundleMetadataWithError:", 0],
   ["MIBundle", "- validatePluginKitMetadataWithError:", 0],
+  [
+    "MIExecutableBundle",
+    "- hasOnlyAllowedWatchKitAppInfoPlistKeysForWatchKitVersion:error:",
+    1,
+  ],
 ];
 
 validationHooks.forEach(([className, selName, errArgIdx]) => {
@@ -112,7 +117,9 @@ if (cseMethod) {
       retval.replace(ptr(1));
     },
   });
-  console.log("Hooked -[MIDaemonConfiguration codeSigningEnforcementIsDisabled]");
+  console.log(
+    "Hooked -[MIDaemonConfiguration codeSigningEnforcementIsDisabled]",
+  );
 }
 
 // Code signature verification bypass.
@@ -136,9 +143,11 @@ if (perfValMethod) {
         const bundle = verifier.bundle();
         const bundleId = bundle.identifier();
 
-        const sigInfo = ObjC.classes.MICodeSigningInfo.alloc()
-          .initWithSignerIdentity_signerOrganization_codeInfoIdentifier_teamIdentifier_signatureVersion_entitlements_signerType_profileType_signingInfoSource_launchWarningData_(
-            ObjC.classes.NSString.stringWithString_("Apple iPhone OS Application Signing"),
+        const sigInfo =
+          ObjC.classes.MICodeSigningInfo.alloc().initWithSignerIdentity_signerOrganization_codeInfoIdentifier_teamIdentifier_signatureVersion_entitlements_signerType_profileType_signingInfoSource_launchWarningData_(
+            ObjC.classes.NSString.stringWithString_(
+              "Apple iPhone OS Application Signing",
+            ),
             ObjC.classes.NSString.stringWithString_("Apple Inc."),
             bundleId,
             ObjC.classes.NSString.stringWithString_("FAKETEAMID"),
@@ -151,7 +160,10 @@ if (perfValMethod) {
           );
 
         // Set _signingInfo on the verifier so the caller can read it
-        verifier.setValue_forKey_(sigInfo, ObjC.classes.NSString.stringWithString_("signingInfo"));
+        verifier.setValue_forKey_(
+          sigInfo,
+          ObjC.classes.NSString.stringWithString_("signingInfo"),
+        );
 
         retval.replace(ptr(1));
         if (!this.errPtr.isNull()) {
