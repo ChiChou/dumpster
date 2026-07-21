@@ -41,14 +41,16 @@ class Device:
         )
 
     def pull(self, remote: str, local: str) -> None:
+        # SFTP mode (default since OpenSSH 9): the legacy SCP protocol (-O)
+        # can't handle paths with spaces with modern clients
         subprocess.run(
-            ["scp", "-O", *self._conn, f"{self._remote}:{shlex.quote(remote)}", local],
+            ["scp", *self._conn, f"{self._remote}:{remote}", local],
             check=True,
         )
 
     def push(self, *local: str, remote: str) -> None:
         subprocess.run(
-            ["scp", "-O", *self._conn, *local, f"{self._remote}:{shlex.quote(remote)}"],
+            ["scp", *self._conn, *local, f"{self._remote}:{remote}"],
             check=True,
         )
 
