@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 
 
 class MachO:
@@ -40,7 +41,11 @@ class MachO:
         raise NotImplementedError
 
 
-EncryptionInfo = dict[str, int]
+@dataclass(frozen=True)
+class EncryptionInfo:
+    cryptoff: int
+    cryptsize: int
+    cryptid: int
 
 
 class ThinBinary(MachO):
@@ -71,7 +76,7 @@ class ThinBinary(MachO):
                     fmt, self.data, lc_offset + 8
                 )
                 results.append(
-                    {"cryptoff": cryptoff, "cryptsize": cryptsize, "cryptid": cryptid}
+                    EncryptionInfo(cryptoff=cryptoff, cryptsize=cryptsize, cryptid=cryptid)
                 )
             lc_offset += cmdsize
         return results
