@@ -23,7 +23,7 @@ class MachO:
         if len(data) < 4:
             return None
         (magic,) = struct.unpack_from("<I", data, 0)
-        if magic in MachO._FAT:
+        if magic in MachO._FAT and len(data) >= 8:
             return FatBinary(data)
         if magic in MachO._MAGICS:
             return ThinBinary(data, 0)
@@ -82,7 +82,7 @@ class FatBinary(MachO):
         self.data = data
         (magic,) = struct.unpack_from("<I", data, 0)
         self.swap = magic == MachO.FAT_CIGAM
-        fmt = ">" if not self.swap else "<"
+        fmt = "<" if not self.swap else ">"
         (self.nfat,) = struct.unpack_from(fmt + "I", data, 4)
         self._fmt = fmt
 
@@ -90,9 +90,14 @@ class FatBinary(MachO):
         result: list[ThinBinary] = []
         for i in range(self.nfat):
             fa_offset = 8 + i * 20
+            if fa_offset + 20 > len(self.data):
+                break
             _, _, arch_offset, _, _ = struct.unpack_from(
                 self._fmt + "IIIII", self.data, fa_offset
             )
+            # enough data for at least a Mach-O header read
+            if arch_offset + 24 > len(self.data):
+                continue
             result.append(ThinBinary(self.data, arch_offset))
         return result
 
