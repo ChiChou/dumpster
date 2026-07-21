@@ -44,22 +44,10 @@ def strip_watch_app(ipa: zipfile.ZipFile) -> str | None:
     fd, copy_path = tempfile.mkstemp(suffix=".ipa")
     os.close(fd)
     logging.info(f"stripping bundled Watch app into {copy_path}")
-
-    if shutil.which("zip"):
-        # zip -d is much faster than re-writing the archive in Python
-        assert ipa.filename is not None
-        shutil.copy(ipa.filename, copy_path)
-        subprocess.run(["zip", "-dq", copy_path, f"{watch_prefix}*"], check=True)
-    else:
-        with zipfile.ZipFile(copy_path, "w") as out:
-            for item in ipa.infolist():
-                if item.filename.startswith(watch_prefix):
-                    continue
-                with ipa.open(item) as f:
-                    data = f.read()
-                # writestr mutates the ZipInfo; pass a copy so the source
-                # archive stays readable afterwards
-                out.writestr(copy.copy(item), data)
+    assert ipa.filename is not None
+    shutil.copy(ipa.filename, copy_path)
+    # zip -d is much faster than re-writing the archive in Python
+    subprocess.run(["zip", "-dq", copy_path, f"{watch_prefix}*"], check=True)
     return copy_path
 
 
