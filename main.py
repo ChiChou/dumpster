@@ -9,8 +9,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import zipfile
-
 
 def _find_data_file(build_dir: str, name: str) -> str:
     """Locate a bundled iOS binary from the installed ios_tools package."""
@@ -196,14 +196,61 @@ SSH_OPTIONS = [
     "UserKnownHostsFile=/dev/null",
 ]
 
+# ssh/scp exit 255 when the client itself fails to connect (as opposed to the
+# remote command's own exit status) — that's the USB/inetcat tunnel dropping,
+# not a real command failure, so it's worth a few retries.
+TRANSPORT_FAILURE_CODE = 255
+TRANSPORT_RETRY_ATTEMPTS = 3
+TRANSPORT_RETRY_DELAY = 2.0
+
+
+def _run_transport(
+    cmd: list[str], check: bool, password: str | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    env = None
+    if password is not None:
+        # Password goes through the SSHPASS env var, not a CLI flag, so it
+        # doesn't show up in `ps` output for the ssh/scp child process.
+        cmd = ["sshpass", "-e", *cmd]
+        env = {**os.environ, "SSHPASS": password}
+
+    result = subprocess.run(cmd, capture_output=True, env=env)
+    for attempt in range(1, TRANSPORT_RETRY_ATTEMPTS):
+        if result.returncode != TRANSPORT_FAILURE_CODE:
+            break
+        logging.warning(
+            f"lost USB connection, retrying ({attempt}/{TRANSPORT_RETRY_ATTEMPTS - 1})"
+        )
+        time.sleep(TRANSPORT_RETRY_DELAY)
+        result = subprocess.run(cmd, capture_output=True, env=env)
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+    return result
+
 
 class Device:
-    def __init__(self, udid: str | None = None, user: str = "mobile") -> None:
+    def __init__(
+        self,
+        udid: str | None = None,
+        user: str = "root",
+        ip: str | None = None,
+        port: int = 22,
+        password: str | None = None,
+    ) -> None:
         self.udid = udid
         self.user = user
-        proxy = f"inetcat -u {udid} 22" if udid else "inetcat 22"
-        self._conn = [*SSH_OPTIONS, "-o", f"ProxyCommand={proxy}"]
-        self._remote = f"{user}@localhost"
+        self._password = password
+        if password is not None and not shutil.which("sshpass"):
+            sys.exit("error: --password requires sshpass (install via `brew install sshpass`)")
+        if ip:
+            # Direct network connection — skip the USB/inetcat proxy entirely.
+            # "-o Port=" works for both ssh and scp (unlike ssh's "-p" vs scp's "-P").
+            self._conn = [*SSH_OPTIONS, "-o", f"Port={port}"]
+            self._remote = f"{user}@{ip}"
+        else:
+            proxy = f"inetcat -u {udid} 22" if udid else "inetcat 22"
+            self._conn = [*SSH_OPTIONS, "-o", f"ProxyCommand={proxy}"]
+            self._remote = f"{user}@localhost"
 
     def idevice(self, *args: str) -> list[str]:
         cmd = list(args)
@@ -214,48 +261,40 @@ class Device:
 
     def ssh(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
         cmd = " ".join(shlex.quote(a) for a in args)
-        return subprocess.run(
-            ["ssh", *self._conn, self._remote, cmd],
-            check=check,
-            capture_output=True,
+        return _run_transport(
+            ["ssh", *self._conn, self._remote, cmd], check=check, password=self._password
         )
 
     def pull(self, remote: str, local: str) -> None:
-        subprocess.run(
+        _run_transport(
             ["scp", "-O", *self._conn, f"{self._remote}:{shlex.quote(remote)}", local],
             check=True,
+            password=self._password,
         )
 
     def push(self, *local: str, remote: str) -> None:
-        subprocess.run(
+        _run_transport(
             ["scp", "-O", *self._conn, *local, f"{self._remote}:{shlex.quote(remote)}"],
             check=True,
+            password=self._password,
         )
 
     def ensure_tool(self, name: str, build_dir: str) -> None:
-        result = self.ssh("test", "-x", f"/var/jb/bin/{name}", check=False)
-        if result.returncode == 0:
+        # Check entitlements, not just presence — a stale unsigned binary from
+        # an earlier failed deploy would otherwise pass a plain -x check forever.
+        result = self.ssh("ldid", "-e", f"/var/jb/bin/{name}", check=False)
+        if result.returncode == 0 and b"platform-application" in result.stdout:
             return
-        logging.info(f"{name} not found on device, deploying")
+        logging.info(f"{name} missing or unsigned on device, deploying")
 
         binary = _find_data_file(build_dir, name)
         entxml = _find_data_file(build_dir, "ent.xml")
         self.push(binary, entxml, remote="/tmp/")
 
         target = f"/var/jb/bin/{name}"
-        self.ssh(
-            "mv",
-            f"/tmp/{name}",
-            target,
-            "&&",
-            "chmod",
-            "755",
-            target,
-            "&&",
-            "ldid",
-            "-S/tmp/ent.xml",
-            target,
-        )
+        self.ssh("mv", f"/tmp/{name}", target)
+        self.ssh("chmod", "755", target)
+        self.ssh("ldid", "-S/tmp/ent.xml", target)
 
     def get_installed_apps(self) -> list[dict]:
         cmd = self.idevice("ideviceinstaller", "list", "--xml", "--user")
@@ -486,6 +525,15 @@ def main() -> None:
     )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
+    parser.add_argument(
+        "--ip", help="connect directly over network instead of USB (skips inetcat)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=22, help="SSH port to use with --ip (default: 22)"
+    )
+    parser.add_argument(
+        "--password", help="SSH password (uses sshpass instead of key-based auth)"
+    )
     codesign_group = parser.add_mutually_exclusive_group()
     codesign_group.add_argument(
         "--strip-codesign",
@@ -518,7 +566,7 @@ def main() -> None:
         format="%(message)s",
     )
 
-    dev = Device(udid=args.udid)
+    dev = Device(udid=args.udid, ip=args.ip, port=args.port, password=args.password)
 
     if args.list:
         list_apps(dev)

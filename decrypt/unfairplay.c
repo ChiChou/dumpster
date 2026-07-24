@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
@@ -72,6 +73,82 @@ static uint8_t* map(const char *path, bool mutable, size_t *size, int *descripto
     return base;
 }
 
+// clonefile() is a COW clone, so it only works within the same volume. Used
+// as a fallback for when src/dest cross a volume boundary (e.g. app bundle
+// vs. jailbreak-relocated output dir), where a plain copy is required.
+static int copy_file(const char *dst, const uint8_t *src, size_t size) {
+    int out = open(dst, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (out < 0) {
+        perror("open (dst)");
+        return 1;
+    }
+
+    size_t written = 0;
+    while (written < size) {
+        ssize_t n = write(out, src + written, size - written);
+        if (n < 0) {
+            perror("write");
+            close(out);
+            return 1;
+        }
+        written += (size_t) n;
+    }
+
+    close(out);
+    return 0;
+}
+
+// Clone src to dst (falling back to a plain copy across volume boundaries),
+// removing any stale dst first so this is safe to retry.
+static int clone_or_copy(const char *src, const char *dst, const uint8_t *full_base, size_t full_size) {
+    unlink(dst);
+    if (clonefile(src, dst, 0) != 0) {
+        if (errno != EXDEV || copy_file(dst, full_base, full_size) != 0) {
+            perror("clonefile");
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Zero out a Mach-O's static-initializer sections (__mod_init_func, and the
+// ObjC "+load" dispatch lists) so dlopen()'ing it won't run any constructors.
+// Some SDKs abuse these for anti-tamper/anti-jailbreak checks that crash the
+// process when loaded outside its normal app context — this lets the warm-up
+// dlopen() proceed (registering the file with the kernel so mremap_encrypted
+// works) without ever running that code. Operates on an already-sliced,
+// native-endian 64-bit Mach-O in memory.
+static void strip_initializers(uint8_t *base, size_t size) {
+    if (size < sizeof(struct mach_header_64)) {
+        return;
+    }
+    struct mach_header_64 *header = (struct mach_header_64 *) base;
+    if (header->magic != MH_MAGIC_64) {
+        return;
+    }
+
+    static const char *init_sections[] = {
+        "__mod_init_func", "__objc_nlclslist", "__objc_nlcatlist",
+    };
+
+    uint32_t offset = sizeof(struct mach_header_64);
+    for (uint32_t i = 0; i < header->ncmds; i++) {
+        struct load_command *command = (struct load_command *) (base + offset);
+        if (command->cmd == LC_SEGMENT_64) {
+            struct segment_command_64 *seg = (struct segment_command_64 *) command;
+            struct section_64 *sections = (struct section_64 *) (seg + 1);
+            for (uint32_t s = 0; s < seg->nsects; s++) {
+                for (size_t k = 0; k < sizeof(init_sections) / sizeof(init_sections[0]); k++) {
+                    if (strncmp(sections[s].sectname, init_sections[k], sizeof(sections[s].sectname)) == 0) {
+                        sections[s].size = 0;
+                    }
+                }
+            }
+        }
+        offset += command->cmdsize;
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s src dest\n", argv[0]);
@@ -85,8 +162,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (clonefile(argv[1], argv[2], 0) != 0) {
-        perror("clonefile");
+    if (clone_or_copy(argv[1], argv[2], base, base_size) != 0) {
         munmap(base, base_size);
         close(f);
         return 1;
@@ -155,7 +231,23 @@ int main(int argc, char* argv[]) {
             waitpid(pid, NULL, 0);
         }
     } else {
-        dlopen(argv[1], RTLD_LAZY | RTLD_LOCAL);
+        // Warm up a disposable, initializer-stripped clone instead of the
+        // real file directly — see strip_initializers() above.
+        char warmup_path[1024];
+        snprintf(warmup_path, sizeof(warmup_path), "%s.warmup", argv[2]);
+
+        if (clone_or_copy(argv[1], warmup_path, real_base, real_base_size) == 0) {
+            size_t warmup_size;
+            uint8_t *warmup_base = map(warmup_path, true, &warmup_size, NULL);
+            if (warmup_base != NULL) {
+                if (fileoff < warmup_size) {
+                    strip_initializers(warmup_base + fileoff, warmup_size - fileoff);
+                }
+                dlopen(warmup_path, RTLD_LAZY | RTLD_LOCAL);
+                munmap(warmup_base, warmup_size);
+            }
+            unlink(warmup_path);
+        }
     }
 
     uint32_t offset = sizeof(struct mach_header_64);
