@@ -1,7 +1,7 @@
 #include <Foundation/Foundation.h>
 #include <Foundation/NSObjCRuntime.h>
 #include <objc/runtime.h>
-// #include <substrate.h>  // disabled — using objc runtime directly
+#include <substrate.h>
 
 #define LOG(fmt, ...) NSLog(@"[rubberstamp] " fmt "\n", ##__VA_ARGS__)
 
@@ -22,7 +22,6 @@ void sanitize(NSMutableDictionary *plist);
                     launchWarningData:(id)launchWarningData;
 @end
 
-#if 0
 #pragma mark - Hooks
 
 static NSMutableDictionary *(*orig_MILoadInfoPlist)(NSURL *bundle, NSSet *keys);
@@ -41,8 +40,6 @@ hooked_MILoadInfoPlistWithError(NSURL *bundle, NSSet *keys, NSError **err) {
   sanitize(plist);
   return plist;
 }
-
-#endif
 
 // Generic validation bypass — always returns YES and clears the error out-param
 static BOOL hooked_validatePass(id self, SEL _cmd, NSError **err) {
@@ -103,29 +100,26 @@ static void hookValidation(Class cls, SEL sel, IMP replacement) {
 void init() {
   LOG(@"loaded in installd (%d)", getpid());
 
-#if 0
   MSImageRef image = MSGetImageByName(
       "/System/Library/PrivateFrameworks/InstalledContentLibrary.framework/"
       "InstalledContentLibrary");
   if (!image) {
     LOG(@"failed to find InstalledContentLibrary framework");
-    return;
-  }
+  } else {
+    // MILoadInfoPlist(NSURL *bundle, NSSet *keys);
+    void *symbol1 = MSFindSymbol(image, "_MILoadInfoPlist");
+    if (symbol1) {
+      MSHookFunction(symbol1, (void *)&hooked_MILoadInfoPlist,
+                     (void **)&orig_MILoadInfoPlist);
+    }
 
-  // MILoadInfoPlist(NSURL *bundle, NSSet *keys);
-  void *symbol1 = MSFindSymbol(image, "_MILoadInfoPlist");
-  if (symbol1) {
-    MSHookFunction(symbol1, (void *)&hooked_MILoadInfoPlist,
-                   (void **)&orig_MILoadInfoPlist);
+    // MILoadInfoPlistWithErorr(NSURL *bundle, NSSet *keys, NSError **err);
+    void *symbol2 = MSFindSymbol(image, "_MILoadInfoPlistWithError");
+    if (symbol2) {
+      MSHookFunction(symbol2, (void *)&hooked_MILoadInfoPlistWithError,
+                     (void **)&orig_MILoadInfoPlistWithError);
+    }
   }
-
-  // MILoadInfoPlistWithErorr(NSURL *bundle, NSSet *keys, NSError **err);
-  void *symbol2 = MSFindSymbol(image, "_MILoadInfoPlistWithError");
-  if (symbol2) {
-    MSHookFunction(symbol2, (void *)&hooked_MILoadInfoPlistWithError,
-                   (void **)&orig_MILoadInfoPlistWithError);
-  }
-#endif
 
   // Bypass bundle validation — minimum kill switch (3 hooks).
   // See report.md for the full call tree and rationale.
