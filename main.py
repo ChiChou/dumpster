@@ -12,7 +12,6 @@ import sys
 import time
 import zipfile
 
-
 def _find_data_file(build_dir: str, name: str) -> str:
     """Locate a bundled iOS binary from the installed ios_tools package."""
     import ios_tools
