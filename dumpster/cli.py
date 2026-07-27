@@ -4,12 +4,11 @@ import argparse
 import logging
 import os
 import sys
-import zipfile
 
 from .codesign import list_codesign_identities
 from .core import decrypt, list_apps, process_ipa
 from .device import Device
-from .ipa import load_info_plist, repack_ipa
+from .ipa import IPA
 
 
 def main() -> None:
@@ -147,14 +146,13 @@ def repack_main() -> None:
     )
 
     for path in args.ipa:
-        ipa = zipfile.ZipFile(path, "r")
-        _, metadata = load_info_plist(ipa)
-        bundle_id = metadata["CFBundleIdentifier"]
-        outdir = os.path.join(args.dump_dir, bundle_id)
-        if not os.path.isdir(outdir):
-            logging.error(f"no dump found for {bundle_id} at {outdir}, skipping")
-            continue
-        repack_ipa(ipa, outdir)
+        with IPA(path, "r") as ipa:
+            bundle_id = ipa.bundle_id
+            outdir = os.path.join(args.dump_dir, bundle_id)
+            if not os.path.isdir(outdir):
+                logging.error(f"no dump found for {bundle_id} at {outdir}, skipping")
+                continue
+            ipa.repack(outdir)
 
 
 if __name__ == "__main__":

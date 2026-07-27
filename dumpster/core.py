@@ -5,11 +5,10 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 
 from .codesign import codesign_binaries
 from .device import Device
-from .ipa import encrypted_machos, load_info_plist, repack_ipa, strip_watch_app
+from .ipa import IPA
 
 
 def filter_executables(
@@ -25,7 +24,7 @@ def filter_executables(
 def decrypt(
     dev: Device,
     bundle_id: str,
-    ipa: zipfile.ZipFile | None = None,
+    ipa: IPA | None = None,
     all_binaries: bool = False,
     repack: bool = True,
     codesign_mode: str | None = None,
@@ -42,7 +41,7 @@ def decrypt(
     app_name = os.path.basename(bundle_path)
 
     if ipa:
-        executables = set(encrypted_machos(ipa))
+        executables = set(ipa.encrypted_machos())
     else:
         result = dev.ssh("/var/jb/bin/dumpster", bundle_id)
         lines = result.stdout.decode().strip().splitlines()
@@ -96,7 +95,7 @@ def decrypt(
         logging.info(f"decrypted binaries saved to {outdir}")
         return
 
-    repack_ipa(ipa, outdir, decrypted)
+    ipa.repack(outdir, decrypted)
 
 
 def list_apps(dev: Device) -> None:
@@ -138,32 +137,31 @@ def process_ipa(
     codesign_mode: str | None = None,
     codesign_identity: str | None = None,
 ) -> None:
-    ipa = zipfile.ZipFile(path, "r")
-    _, metadata = load_info_plist(ipa)
-    bundle_id = metadata["CFBundleIdentifier"]
-    version = metadata.get("CFBundleShortVersionString", "")
+    with IPA(path, "r") as ipa:
+        bundle_id = ipa.bundle_id
+        version = ipa.metadata.get("CFBundleShortVersionString", "")
 
-    installed = dev.find_app(bundle_id)
-    if installed and installed.get("CFBundleShortVersionString") == version:
-        logging.info(f"{bundle_id} v{version} already installed, skipping")
-    else:
-        logging.info(f"installing {path}")
-        stripped = strip_watch_app(ipa)
-        try:
-            subprocess.run(
-                dev.idevice("ideviceinstaller", "install", stripped or path),
-                check=True,
-            )
-        finally:
-            if stripped:
-                os.remove(stripped)
+        installed = dev.find_app(bundle_id)
+        if installed and installed.get("CFBundleShortVersionString") == version:
+            logging.info(f"{bundle_id} v{version} already installed, skipping")
+        else:
+            logging.info(f"installing {path}")
+            stripped = ipa.strip_watch_app()
+            try:
+                subprocess.run(
+                    dev.idevice("ideviceinstaller", "install", stripped or path),
+                    check=True,
+                )
+            finally:
+                if stripped:
+                    os.remove(stripped)
 
-    decrypt(
-        dev,
-        bundle_id,
-        ipa=ipa,
-        all_binaries=all_binaries,
-        repack=repack,
-        codesign_mode=codesign_mode,
-        codesign_identity=codesign_identity,
-    )
+        decrypt(
+            dev,
+            bundle_id,
+            ipa=ipa,
+            all_binaries=all_binaries,
+            repack=repack,
+            codesign_mode=codesign_mode,
+            codesign_identity=codesign_identity,
+        )
