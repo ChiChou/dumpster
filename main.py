@@ -204,8 +204,34 @@ TRANSPORT_RETRY_ATTEMPTS = 3
 TRANSPORT_RETRY_DELAY = 2.0
 
 
+class RemoteError(RuntimeError):
+    """A remote ssh/scp invocation failed. Formats a concise, user-facing message
+    with the actual remote stderr rather than the full local command array."""
+
+    HINTS = {
+        127: "command not found on device",
+        255: "ssh transport failure (connection dropped)",
+    }
+
+    def __init__(self, program: str, remote_cmd: str | None, returncode: int, stderr: bytes) -> None:
+        self.returncode = returncode
+        self.stderr = stderr.decode(errors="replace").strip()
+        parts = [f"{program} exited {returncode}"]
+        if remote_cmd:
+            parts.append(f"running `{remote_cmd}`")
+        if hint := self.HINTS.get(returncode):
+            parts.append(f"({hint})")
+        msg = " ".join(parts)
+        if self.stderr:
+            msg += f": {self.stderr}"
+        super().__init__(msg)
+
+
 def _run_transport(
-    cmd: list[str], check: bool, password: str | None = None
+    cmd: list[str],
+    check: bool,
+    password: str | None = None,
+    remote_cmd: str | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     env = None
     if password is not None:
@@ -224,7 +250,11 @@ def _run_transport(
         time.sleep(TRANSPORT_RETRY_DELAY)
         result = subprocess.run(cmd, capture_output=True, env=env)
     if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+        program = "sshpass" if password is not None else cmd[0]
+        # Skip past the sshpass wrapper so `program` matches the real tool.
+        if password is not None and len(cmd) > 2:
+            program = cmd[2]
+        raise RemoteError(program, remote_cmd, result.returncode, result.stderr)
     return result
 
 
@@ -236,20 +266,22 @@ class Device:
         ip: str | None = None,
         port: int = 22,
         password: str | None = None,
+        key: str | None = None,
     ) -> None:
         self.udid = udid
         self.user = user
         self._password = password
         if password is not None and not shutil.which("sshpass"):
             sys.exit("error: --password requires sshpass (install via `brew install sshpass`)")
+        key_opts = ["-i", key, "-o", "IdentitiesOnly=yes"] if key else []
         if ip:
             # Direct network connection — skip the USB/inetcat proxy entirely.
             # "-o Port=" works for both ssh and scp (unlike ssh's "-p" vs scp's "-P").
-            self._conn = [*SSH_OPTIONS, "-o", f"Port={port}"]
+            self._conn = [*SSH_OPTIONS, *key_opts, "-o", f"Port={port}"]
             self._remote = f"{user}@{ip}"
         else:
             proxy = f"inetcat -u {udid} 22" if udid else "inetcat 22"
-            self._conn = [*SSH_OPTIONS, "-o", f"ProxyCommand={proxy}"]
+            self._conn = [*SSH_OPTIONS, *key_opts, "-o", f"ProxyCommand={proxy}"]
             self._remote = f"{user}@localhost"
 
     def idevice(self, *args: str) -> list[str]:
@@ -262,7 +294,10 @@ class Device:
     def ssh(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
         cmd = " ".join(shlex.quote(a) for a in args)
         return _run_transport(
-            ["ssh", *self._conn, self._remote, cmd], check=check, password=self._password
+            ["ssh", *self._conn, self._remote, cmd],
+            check=check,
+            password=self._password,
+            remote_cmd=cmd,
         )
 
     def pull(self, remote: str, local: str) -> None:
@@ -362,6 +397,53 @@ def codesign_binaries(outdir: str, mode: str, identity: str | None = None) -> No
                 subprocess.run(["codesign", "-f", "-s", identity, path], check=True)
 
 
+def _parse_dumpster_list(stdout: str) -> list[tuple[str, str]]:
+    """Parse `dumpster -l` output into (bundle_id, localized_name) pairs.
+    The tool prints three lines per app: bundle_id, name, blank."""
+    apps: list[tuple[str, str]] = []
+    for block in stdout.strip().split("\n\n"):
+        parts = block.split("\n", 1)
+        if len(parts) == 2:
+            apps.append((parts[0], parts[1]))
+    return apps
+
+
+def resolve_target(dev: Device, query: str) -> str:
+    """Resolve a user-supplied target to a bundle identifier via the on-device
+    app list. Accepts an exact bundle ID, or a case-insensitive substring of a
+    bundle ID or localized name; errors on ambiguous or missing matches."""
+    result = dev.ssh("/var/jb/bin/dumpster", "-l")
+    apps = _parse_dumpster_list(result.stdout.decode())
+
+    for bid, _ in apps:
+        if bid == query:
+            return bid
+
+    q = query.lower()
+    matches = [(b, n) for b, n in apps if q in b.lower() or q in n.lower()]
+    if not matches:
+        sys.exit(f"error: no installed app matches '{query}'")
+    if len(matches) > 1:
+        width = max(len(b) for b, _ in matches)
+        print(f"'{query}' matches multiple apps:")
+        for i, (b, n) in enumerate(matches, 1):
+            print(f"  {i}) {b.ljust(width)}  {n}")
+        while True:
+            try:
+                choice = input(f"Select [1-{len(matches)}]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                sys.exit("aborted")
+            if choice.isdigit() and 1 <= int(choice) <= len(matches):
+                matches = [matches[int(choice) - 1]]
+                break
+            print(f"invalid choice: {choice!r}")
+
+    bid, name = matches[0]
+    logging.info(f"resolved '{query}' → {bid} ({name})")
+    return bid
+
+
 def decrypt(
     dev: Device,
     bundle_id: str,
@@ -373,6 +455,9 @@ def decrypt(
 ) -> None:
     dev.ensure_tool("unfairplay", "decrypt")
     dev.ensure_tool("dumpster", "wrapper")
+
+    if ipa is None:
+        bundle_id = resolve_target(dev, bundle_id)
 
     match = dev.find_app(bundle_id)
     if not match:
@@ -534,6 +619,9 @@ def main() -> None:
     parser.add_argument(
         "--password", help="SSH password (uses sshpass instead of key-based auth)"
     )
+    parser.add_argument(
+        "--key", help="path to SSH private key to use for authentication"
+    )
     codesign_group = parser.add_mutually_exclusive_group()
     codesign_group.add_argument(
         "--strip-codesign",
@@ -566,7 +654,13 @@ def main() -> None:
         format="%(message)s",
     )
 
-    dev = Device(udid=args.udid, ip=args.ip, port=args.port, password=args.password)
+    dev = Device(
+        udid=args.udid,
+        ip=args.ip,
+        port=args.port,
+        password=args.password,
+        key=args.key,
+    )
 
     if args.list:
         list_apps(dev)
