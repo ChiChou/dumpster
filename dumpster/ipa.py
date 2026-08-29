@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 import os
 import plistlib
@@ -11,6 +10,8 @@ import zipfile
 from functools import cached_property
 
 from .macho import MachO
+
+logger = logging.getLogger(__name__)
 
 
 class IPA(zipfile.ZipFile):
@@ -59,12 +60,79 @@ class IPA(zipfile.ZipFile):
 
         fd, copy_path = tempfile.mkstemp(suffix=".ipa")
         os.close(fd)
-        logging.info(f"stripping bundled Watch app into {copy_path}")
-        assert self.filename is not None
-        shutil.copy(self.filename, copy_path)
-        # zip -d is much faster than re-writing the archive in Python
-        subprocess.run(["zip", "-dq", copy_path, f"{watch_prefix}*"], check=True)
+        logger.info(f"creating Watch-free intermediate IPA at {copy_path}")
+        try:
+            self._native_repack(copy_path)
+        except Exception:
+            try:
+                os.remove(copy_path)
+            except FileNotFoundError:
+                pass
+            raise
         return copy_path
+
+    def _native_repack(
+        self,
+        output_path: str,
+        replacements: set[str] | None = None,
+        replacement_dir: str | None = None,
+    ) -> None:
+        """Copy the IPA, remove unwanted entries, and add replacements."""
+        assert self.filename is not None
+        source_path = os.path.abspath(self.filename)
+        output_path = os.path.abspath(output_path)
+        replacements = replacements or set()
+        watch_replacement_prefix = f"{self.app_name}/Watch/"
+        replacements = {
+            filename
+            for filename in replacements
+            if not filename.startswith(watch_replacement_prefix)
+        }
+        if replacements and replacement_dir is None:
+            raise ValueError("replacement_dir is required for replacements")
+        existing_entries = set(self.namelist())
+
+        shutil.copyfile(source_path, output_path)
+
+        watch_prefix = f"{self.app_path}/Watch/"
+        delete_entries = []
+        if any(name.startswith(watch_prefix) for name in existing_entries):
+            delete_entries.append(f"{watch_prefix}*")
+        delete_entries.extend(
+            f"Payload/{filename}"
+            for filename in sorted(replacements)
+            if f"Payload/{filename}" in existing_entries
+        )
+        if delete_entries:
+            logger.info("removing bundled Watch app and replaced entries")
+            subprocess.run(
+                ["zip", "-dq", output_path, *delete_entries],
+                check=True,
+            )
+
+        if not replacements:
+            return
+        assert replacement_dir is not None
+
+        with tempfile.TemporaryDirectory(prefix="dumpster-ipa-") as staging_dir:
+            payload_dir = os.path.join(staging_dir, "Payload")
+            archive_paths: list[str] = []
+            for filename in sorted(replacements):
+                source = os.path.join(replacement_dir, filename)
+                archive_path = f"Payload/{filename}"
+                destination = os.path.abspath(os.path.join(staging_dir, archive_path))
+                if os.path.commonpath([payload_dir, destination]) != payload_dir:
+                    raise ValueError(f"replacement escapes Payload/: {filename}")
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copy2(source, destination)
+                archive_paths.append(archive_path)
+
+            logger.info("adding decrypted binaries to archive")
+            subprocess.run(
+                ["zip", "-q", "-0", "-y", output_path, *archive_paths],
+                cwd=staging_dir,
+                check=True,
+            )
 
     def encrypted_machos(self) -> list[str]:
         """Paths (relative to Payload/) of encrypted Mach-O files in the IPA."""
@@ -104,22 +172,8 @@ class IPA(zipfile.ZipFile):
         prefix, *_ = os.path.splitext(os.path.basename(self.filename))
         out_ipa = os.path.join(dumpdir, prefix + ".decrypted.ipa")
 
-        logging.info("creating decrypted archive")
-        watch_prefix = f"{self.app_path}/Watch/"
-        with zipfile.ZipFile(out_ipa, "w") as new_ipa:
-            for item in self.infolist():
-                if item.filename.startswith(watch_prefix):
-                    continue
-                filename = item.filename[len("Payload/") :]
-                if filename in replacements:
-                    with open(os.path.join(dumpdir, filename), "rb") as f:
-                        data = f.read()
-                else:
-                    with self.open(item) as f:
-                        data = f.read()
-                # writestr mutates the ZipInfo; pass a copy so the source
-                # archive stays readable afterwards
-                new_ipa.writestr(copy.copy(item), data)
+        logger.info("creating decrypted archive")
+        self._native_repack(out_ipa, replacements, replacement_dir=dumpdir)
 
-        logging.info(f"decrypted IPA saved to {out_ipa}")
+        logger.info(f"decrypted IPA saved to {out_ipa}")
         return out_ipa
