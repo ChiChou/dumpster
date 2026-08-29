@@ -75,6 +75,11 @@ const validationHooks = [
     "- hasOnlyAllowedWatchKitAppInfoPlistKeysForWatchKitVersion:error:",
     1,
   ],
+  [
+    "MIInstallableBundle",
+    "- _performWatchVerificationForSigningInfo:isSystemAppInstall:withError:",
+    2,
+  ],
 ];
 
 validationHooks.forEach(([className, selName, errArgIdx]) => {
@@ -120,4 +125,30 @@ if (cseMethod) {
   console.log(
     "Hooked -[MIDaemonConfiguration codeSigningEnforcementIsDisabled]",
   );
+}
+
+// Watch stripping changes the app's resource seal, but leaves every executable's
+// original FairPlay signature intact. Disable resource validation so the
+// Watch-free intermediate IPA can be installed without re-signing its binaries.
+const verifierClass = ObjC.classes.MICodeSigningVerifier;
+if (verifierClass) {
+  const setValidateResources = verifierClass["- setValidateResources:"];
+  if (setValidateResources) {
+    Interceptor.attach(setValidateResources.implementation, {
+      onEnter(args) {
+        args[2] = ptr(0);
+      },
+    });
+    console.log("Hooked -[MICodeSigningVerifier setValidateResources:]");
+  }
+
+  const validateResources = verifierClass["- validateResources"];
+  if (validateResources) {
+    Interceptor.attach(validateResources.implementation, {
+      onLeave(retval) {
+        retval.replace(ptr(0));
+      },
+    });
+    console.log("Hooked -[MICodeSigningVerifier validateResources]");
+  }
 }

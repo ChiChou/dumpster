@@ -19,6 +19,33 @@
 #define SWAP32(x) (((x & 0xff000000) >> 24) | ((x & 0x00ff0000) >> 8) | ((x & 0x0000ff00) << 8) | ((x & 0x000000ff) << 24))
 
 extern int mremap_encrypted(void*, size_t, uint32_t, uint32_t, uint32_t);
+extern char **environ;
+
+static void warm_up(const char *path, uint32_t filetype) {
+    pid_t pid;
+
+    if (filetype == MH_EXECUTE) {
+        char *spawn_argv[] = {(char *)path, NULL};
+        if (posix_spawn(&pid, path, NULL, NULL, spawn_argv, environ) == 0) {
+            kill(pid, SIGKILL);
+            waitpid(pid, NULL, 0);
+        }
+        return;
+    }
+
+    // Some frameworks execute initializers that abort when loaded outside their
+    // host app. Warm them in a child so a crash cannot kill the decryptor after
+    // the kernel has registered the FairPlay mapping.
+    pid = fork();
+    if (pid == 0) {
+        alarm(5);
+        void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+        _exit(handle == NULL ? 1 : 0);
+    }
+    if (pid > 0) {
+        waitpid(pid, NULL, 0);
+    }
+}
 
 static int unprotect(int f, uint64_t fileoff, uint8_t *dupe, struct encryption_info_command_64 *info) {
     void *base = mmap(NULL, info->cryptsize, PROT_READ | PROT_EXEC, MAP_PRIVATE, f, fileoff + info->cryptoff);
@@ -146,17 +173,7 @@ int main(int argc, char* argv[]) {
     assert(header->cputype == CPU_TYPE_ARM64);
     assert(header->cpusubtype == CPU_SUBTYPE_ARM64_ALL);
 
-    // Warm up
-    if (header->filetype == MH_EXECUTE) {
-        pid_t pid;
-        char *spawn_argv[] = {argv[1], NULL};
-        if (posix_spawn(&pid, argv[1], NULL, NULL, spawn_argv, NULL) == 0) {
-            kill(pid, SIGKILL);
-            waitpid(pid, NULL, 0);
-        }
-    } else {
-        dlopen(argv[1], RTLD_LAZY | RTLD_LOCAL);
-    }
+    warm_up(argv[1], header->filetype);
 
     uint32_t offset = sizeof(struct mach_header_64);
 

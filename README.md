@@ -63,6 +63,11 @@ Decrypt from IPA files (installs if needed, then decrypts and repacks):
 dumpster app1.ipa app2.ipa
 ```
 
+When an IPA contains a bundled Watch app, dumpster creates a temporary
+copy for installation and removes the Watch app in place with `zip -d`. The
+Frida `installd.js` hooks must remain attached while the temporary IPA is
+installed.
+
 If all targets are existing files they are treated as IPAs, otherwise as bundle IDs.
 
 Pull decrypted binaries without repacking into IPA:
