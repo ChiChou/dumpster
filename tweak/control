@@ -1,9 +1,0 @@
-Package: me.chichou.rubberstamp
-Name: RubberStamp
-Version: 0.0.1
-Architecture: iphoneos-arm64
-Description: Disable device checks for install
-Maintainer: codecolorist
-Author: codecolorist
-Section: Tweaks
-Depends: ellekit

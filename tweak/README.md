@@ -1,30 +1,18 @@
-# RubberStamp
+# installd.js
 
-Disable MinimumOSVersion verification so you can install IPA that requires higher iOS version and then use fouldecrypt to fetch executables.
+[Frida](https://frida.re/) script that patches `installd` so you can install IPAs that require a higher iOS version, then use dumpster to fetch the decrypted executables.
+
+It disables `MinimumOSVersion` and related Info.plist checks, bundle metadata validation, code signing enforcement, Watch verification, and resource-seal validation (so dumpster's Watch-free intermediate IPA can be installed without re-signing).
 
 ## Requirements
 
-* jailbroken iOS
-* [Frida](https://frida.re/) on the host and device, or
-  [theos](https://theos.dev/) for the compiled tweak
+* jailbroken iOS with `frida-server` running on the device
+* `frida` CLI on your computer (`pip install frida-tools`)
 
-## Frida
-
-Attach the supplied script before installing an IPA and keep it attached for
-the duration of the install:
+## Usage
 
 ```sh
 frida -U -n installd -l installd.js
 ```
 
-In addition to minimum-version checks, the script disables Watch validation
-and resource-seal verification for dumpster's Watch-free intermediate IPA.
-Executable signatures are left intact so FairPlay pages can still be decrypted.
-
-## Build
-
-```sh
-export ROOTLESS=1  # for rootless jailbreak
-make package
-THEOS_DEVICE_IP=localhost THEOS_DEVICE_PORT=2222 make install
-```
+Keep the script running while you install the IPA (e.g. with `ideviceinstaller` or `dumpster`).
