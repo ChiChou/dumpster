@@ -48,19 +48,19 @@ dumpster -l
 Decrypt a single app by bundle ID:
 
 ```
-dumpster com.example.app
+dumpster --host iphone com.example.app
 ```
 
 Batch decrypt multiple bundle IDs:
 
 ```
-dumpster com.example.app1 com.example.app2 com.example.app3
+dumpster --host iphone com.example.app1 com.example.app2 com.example.app3
 ```
 
 Decrypt from IPA files (installs if needed, then decrypts and repacks):
 
 ```
-dumpster app1.ipa app2.ipa
+dumpster --host iphone app1.ipa app2.ipa
 ```
 
 When an IPA contains a bundled Watch app, dumpster creates a temporary
@@ -73,25 +73,25 @@ If all targets are existing files they are treated as IPAs, otherwise as bundle 
 Pull decrypted binaries without repacking into IPA:
 
 ```
-dumpster --no-repack app.ipa
+dumpster --host iphone --no-repack app.ipa
 ```
 
 Skip extensions, only decrypt main binary and frameworks:
 
 ```
-dumpster --no-ext com.example.app
+dumpster --host iphone --no-ext com.example.app
 ```
 
 Skip failed targets and continue with the rest:
 
 ```
-dumpster -k com.example.app1 com.example.app2
+dumpster --host iphone -k com.example.app1 com.example.app2
 ```
 
 Specify device UDID when multiple devices are connected:
 
 ```
-dumpster -u DEVICE_UDID com.example.app
+dumpster --host iphone -u DEVICE_UDID com.example.app
 ```
 
 Decrypted output is saved to `dump/<bundle_id>/`. Binaries are always kept regardless of repacking.
@@ -112,6 +112,29 @@ dumpster-repack -d /path/to/dump app.ipa
 
 ## SSH Setup
 
-The tool connects to the device via USB using `inetcat`. No SSH config is needed — it handles the proxy command internally.
+Configure the device as an alias in `~/.ssh/config`; dumpster delegates the user,
+identity, host key, port, and transport settings to OpenSSH. For a USB connection:
 
-If you have multiple devices, pass `--udid` / `-u` to select one.
+```sshconfig
+Host iphone
+    HostName localhost
+    User root
+    IdentityFile ~/.ssh/iphone
+    IdentitiesOnly yes
+    ProxyCommand inetcat 22
+```
+
+For a network connection, configure `HostName` and `Port` for the device and omit
+`ProxyCommand`. Verify that `ssh iphone` works with key authentication, then pass
+the alias to dumpster with `--host iphone`.
+
+If you have multiple devices, put the device UDID in the alias's `ProxyCommand`
+(`inetcat -u DEVICE_UDID 22`) and also pass `--udid` / `-u` so the
+libimobiledevice commands select the same device.
+
+Device tools default to `/var/jb/bin`. Set `DUMPSTER_REMOTE_BIN` when the
+jailbreak uses a different executable directory:
+
+```sh
+DUMPSTER_REMOTE_BIN=/usr/local/bin dumpster --host iphone com.example.app
+```

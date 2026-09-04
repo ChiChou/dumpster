@@ -1,8 +1,9 @@
 SRC = dumpster.m
 BIN = dumpster
 
-IOS_HOST := root@ios
-TARGET_PATH := /var/jb/bin/$(BIN)
+IOS_HOST ?= iphone
+DUMPSTER_REMOTE_BIN ?= /var/jb/bin
+TARGET_PATH := $(DUMPSTER_REMOTE_BIN)/$(BIN)
 
 ios:
 	clang -arch arm64 -fmodules \

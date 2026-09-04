@@ -32,6 +32,11 @@ def main() -> None:
     )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
+    parser.add_argument(
+        "--host",
+        metavar="ALIAS",
+        help="SSH host alias configured in ~/.ssh/config",
+    )
     codesign_group = parser.add_mutually_exclusive_group()
     codesign_group.add_argument(
         "--strip-codesign",
@@ -64,14 +69,16 @@ def main() -> None:
         format="%(message)s",
     )
 
-    dev = Device(udid=args.udid)
-
     if args.list:
-        list_apps(dev)
+        list_apps(Device(udid=args.udid))
         return
 
     if not args.targets:
         parser.error("at least one target is required unless using -l")
+    if not args.host:
+        parser.error("--host is required")
+
+    dev = Device(args.host, udid=args.udid)
 
     if args.sign == "list":
         if sys.platform != "darwin":

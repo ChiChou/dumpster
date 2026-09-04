@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 #include <assert.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -6,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/clonefile.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -99,6 +99,34 @@ static uint8_t* map(const char *path, bool mutable, size_t *size, int *descripto
     return base;
 }
 
+static int copy_file(const char *src, const char *dst) {
+    @autoreleasepool {
+        NSString *source = [NSString stringWithUTF8String:src];
+        NSString *destination = [NSString stringWithUTF8String:dst];
+        if (source == nil || destination == nil) {
+            fprintf(stderr, "error: file path is not valid UTF-8\n");
+            return 1;
+        }
+
+        NSFileManager *files = [NSFileManager defaultManager];
+        NSError *error = nil;
+        if ([files fileExistsAtPath:destination] &&
+            ![files removeItemAtPath:destination error:&error]) {
+            fprintf(stderr, "error: failed to remove %s: %s\n", dst,
+                    error.localizedDescription.UTF8String);
+            return 1;
+        }
+
+        error = nil;
+        if (![files copyItemAtPath:source toPath:destination error:&error]) {
+            fprintf(stderr, "error: failed to copy %s to %s: %s\n", src, dst,
+                    error.localizedDescription.UTF8String);
+            return 1;
+        }
+        return 0;
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s src dest\n", argv[0]);
@@ -112,8 +140,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (clonefile(argv[1], argv[2], 0) != 0) {
-        perror("clonefile");
+    if (copy_file(argv[1], argv[2]) != 0) {
         munmap(base, base_size);
         close(f);
         return 1;
@@ -123,6 +150,7 @@ int main(int argc, char* argv[]) {
     uint8_t *dupe = map(argv[2], true, &dupe_size, NULL);
     if (dupe == NULL) {
         munmap(base, base_size);
+        close(f);
         return 1;
     }
 
