@@ -43,7 +43,7 @@ def decrypt(
     if ipa:
         executables = set(ipa.encrypted_machos())
     else:
-        result = dev.ssh("/var/jb/bin/dumpster", bundle_id)
+        result = dev.ssh(dev.tool_path("dumpster"), bundle_id)
         lines = result.stdout.decode().strip().splitlines()
         # first line is bundle path, rest are relative encrypted binary paths
         executables = {f"{app_name}/{line}" for line in lines[1:] if line}
@@ -62,7 +62,7 @@ def decrypt(
 
         dev.ssh("mkdir", "-p", parent_dir)
         dev.ssh("rm", "-f", dst)
-        result = dev.ssh("/var/jb/bin/unfairplay", src, dst, check=False)
+        result = dev.ssh(dev.tool_path("unfairplay"), src, dst, check=False)
         if result.returncode != 0:
             stderr = result.stderr.decode().strip()
             logging.warning(f"unfairplay failed for {filename}: {stderr}")
