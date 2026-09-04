@@ -6,7 +6,7 @@ Decrypt IPA executables on jailbroken iOS devices.
 
 Jailbroken iPhone
 
-* `installd` patch [tweak](tweak/README.md)
+* `installd` patch — run the [installd.js](tweak/installd.js) Frida script ([instructions](tweak/README.md))
 * `unfairplay` decryptor [decrypt](decrypt/README.md)
 * `dumpster` wrapper [wrapper](wrapper/) — deployed automatically on first run
 
