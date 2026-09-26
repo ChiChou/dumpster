@@ -14,6 +14,9 @@ ios:
 
 ENT = ent.xml
 
+format:
+	clang-format -i $(SRC)
+
 deploy:
 	scp -O $(BIN) $(ENT) $(IOS_HOST):/tmp/
 	ssh $(IOS_HOST) "mv /tmp/$(BIN) $(TARGET_PATH) && chmod 755 $(TARGET_PATH) && ldid -S/tmp/$(ENT) $(TARGET_PATH)"

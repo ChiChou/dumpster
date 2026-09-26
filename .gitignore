@@ -215,3 +215,4 @@ marimo/_lsp/
 __marimo__/
 
 .DS_Store
+/ios_tools/decrypt/unfairplay

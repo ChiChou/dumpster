@@ -1,242 +1,295 @@
 #import <Foundation/Foundation.h>
 #include <assert.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <mach-o/fat.h>
+#include <mach-o/loader.h>
 #include <signal.h>
 #include <spawn.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <unistd.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <mach-o/loader.h>
-#include <mach-o/fat.h>
 
-#define SWAP32(x) (((x & 0xff000000) >> 24) | ((x & 0x00ff0000) >> 8) | ((x & 0x0000ff00) << 8) | ((x & 0x000000ff) << 24))
+#define SWAP32(x)                                                              \
+  (((x & 0xff000000) >> 24) | ((x & 0x00ff0000) >> 8) |                        \
+   ((x & 0x0000ff00) << 8) | ((x & 0x000000ff) << 24))
 
-extern int mremap_encrypted(void*, size_t, uint32_t, uint32_t, uint32_t);
+extern int mremap_encrypted(void *, size_t, uint32_t, uint32_t, uint32_t);
 extern char **environ;
 
+#define WARM_UP_DYLIB_ARG "--warm-up-dylib"
+
+static void wait_for_child(pid_t pid) {
+  while (waitpid(pid, NULL, 0) < 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    perror("waitpid");
+    return;
+  }
+}
+
 static void warm_up(const char *path, uint32_t filetype) {
-    pid_t pid;
+  pid_t pid;
 
-    if (filetype == MH_EXECUTE) {
-        char *spawn_argv[] = {(char *)path, NULL};
-        if (posix_spawn(&pid, path, NULL, NULL, spawn_argv, environ) == 0) {
-            kill(pid, SIGKILL);
-            waitpid(pid, NULL, 0);
-        }
-        return;
+  if (filetype == MH_EXECUTE) {
+    char *spawn_argv[] = {(char *)path, NULL};
+    int error = posix_spawn(&pid, path, NULL, NULL, spawn_argv, environ);
+    if (error != 0) {
+      fprintf(stderr, "posix_spawn %s: %s\n", path, strerror(error));
+      return;
     }
+    if (kill(pid, SIGKILL) < 0 && errno != ESRCH) {
+      perror("kill");
+    }
+    wait_for_child(pid);
+    return;
+  }
 
-    // Some frameworks execute initializers that abort when loaded outside their
-    // host app. Warm them in a child so a crash cannot kill the decryptor after
-    // the kernel has registered the FairPlay mapping.
-    pid = fork();
-    if (pid == 0) {
-        alarm(5);
-        void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
-        _exit(handle == NULL ? 1 : 0);
-    }
-    if (pid > 0) {
-        waitpid(pid, NULL, 0);
-    }
+  // Some frameworks execute initializers that abort when loaded outside their
+  // host app. Warm them in a separate process so a crash cannot kill the
+  // decryptor after the kernel has registered the FairPlay mapping
+  char executable[PATH_MAX];
+  uint32_t executable_size = sizeof(executable);
+  if (_NSGetExecutablePath(executable, &executable_size) != 0) {
+    fprintf(stderr, "executable path is too long\n");
+    return;
+  }
+
+  char *spawn_argv[] = {
+      executable,
+      WARM_UP_DYLIB_ARG,
+      (char *)path,
+      NULL,
+  };
+  int error = posix_spawn(&pid, executable, NULL, NULL, spawn_argv, environ);
+  if (error != 0) {
+    fprintf(stderr, "posix_spawn %s: %s\n", executable, strerror(error));
+    return;
+  }
+  wait_for_child(pid);
 }
 
-static int unprotect(int f, uint64_t fileoff, uint8_t *dupe, struct encryption_info_command_64 *info) {
-    void *base = mmap(NULL, info->cryptsize, PROT_READ | PROT_EXEC, MAP_PRIVATE, f, fileoff + info->cryptoff);
-    if (base == MAP_FAILED) {
-        perror("mmap");
-        return 1;
-    }
+static int warm_up_dylib(const char *path) {
+  openlog("unfairplay", LOG_PID | LOG_NDELAY, LOG_USER);
+  alarm(5);
+  void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+  if (handle == NULL) {
+    const char *error = dlerror();
+    fprintf(stderr, "failed to load %s: %s\n", path, error);
+    syslog(LOG_ERR, "failed to load %s: %s", path, error);
+    closelog();
+    return 1;
+  }
+  closelog();
+  return 0;
+}
 
-    int error = mremap_encrypted(base, info->cryptsize, info->cryptid,
-        CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL);
-    if (error) {
-        perror("mremap_encrypted");
-        munmap(base, info->cryptsize);
-        return 1;
-    }
+static int unprotect(int f, uint64_t fileoff, uint8_t *dupe,
+                     struct encryption_info_command_64 *info) {
+  void *base = mmap(NULL, info->cryptsize, PROT_READ | PROT_EXEC, MAP_PRIVATE,
+                    f, fileoff + info->cryptoff);
+  if (base == MAP_FAILED) {
+    perror("mmap");
+    return 1;
+  }
 
-    memcpy(dupe + info->cryptoff, base, info->cryptsize);
-
+  int error = mremap_encrypted(base, info->cryptsize, info->cryptid,
+                               CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL);
+  if (error) {
+    perror("mremap_encrypted");
     munmap(base, info->cryptsize);
-    return 0;
+    return 1;
+  }
+
+  memcpy(dupe + info->cryptoff, base, info->cryptsize);
+
+  munmap(base, info->cryptsize);
+  return 0;
 }
 
-static uint8_t* map(const char *path, bool mutable, size_t *size, int *descriptor) {
-    int f = open(path, mutable ? O_RDWR : O_RDONLY);
-    if (f < 0) {
-        perror("open");
-        return NULL;
-    }
+static uint8_t *map(const char *path, bool mutable, size_t *size,
+                    int *descriptor) {
+  int f = open(path, mutable ? O_RDWR : O_RDONLY);
+  if (f < 0) {
+    perror("open");
+    return NULL;
+  }
 
-    struct stat s;
-    if (fstat(f, &s) < 0) {
-        perror("fstat");
-        close(f);
-        return NULL;
-    }
+  struct stat s;
+  if (fstat(f, &s) < 0) {
+    perror("fstat");
+    close(f);
+    return NULL;
+  }
 
-    uint8_t *base = mmap(NULL, s.st_size, mutable ? PROT_READ | PROT_WRITE : PROT_READ,
-        mutable ? MAP_SHARED : MAP_PRIVATE, f, 0);
-    if (base == MAP_FAILED) {
-        perror("mmap");
-        close(f);
-        return NULL;
-    }
+  uint8_t *base =
+      mmap(NULL, s.st_size, mutable ? PROT_READ | PROT_WRITE : PROT_READ,
+           mutable ? MAP_SHARED : MAP_PRIVATE, f, 0);
+  if (base == MAP_FAILED) {
+    perror("mmap");
+    close(f);
+    return NULL;
+  }
 
-    *size = s.st_size;
-    if (descriptor) {
-        *descriptor = f;
-    } else {
-        close(f);
-    }
-    return base;
+  *size = s.st_size;
+  if (descriptor) {
+    *descriptor = f;
+  } else {
+    close(f);
+  }
+  return base;
 }
 
 static int copy_file(const char *src, const char *dst) {
-    @autoreleasepool {
-        NSString *source = [NSString stringWithUTF8String:src];
-        NSString *destination = [NSString stringWithUTF8String:dst];
-        if (source == nil || destination == nil) {
-            fprintf(stderr, "error: file path is not valid UTF-8\n");
-            return 1;
-        }
-
-        NSFileManager *files = [NSFileManager defaultManager];
-        NSError *error = nil;
-        if ([files fileExistsAtPath:destination] &&
-            ![files removeItemAtPath:destination error:&error]) {
-            fprintf(stderr, "error: failed to remove %s: %s\n", dst,
-                    error.localizedDescription.UTF8String);
-            return 1;
-        }
-
-        error = nil;
-        if (![files copyItemAtPath:source toPath:destination error:&error]) {
-            fprintf(stderr, "error: failed to copy %s to %s: %s\n", src, dst,
-                    error.localizedDescription.UTF8String);
-            return 1;
-        }
-        return 0;
+  @autoreleasepool {
+    NSString *source = [NSString stringWithUTF8String:src];
+    NSString *destination = [NSString stringWithUTF8String:dst];
+    if (source == nil || destination == nil) {
+      fprintf(stderr, "error: file path is not valid UTF-8\n");
+      return 1;
     }
+
+    NSFileManager *files = [NSFileManager defaultManager];
+    NSError *error = nil;
+    if ([files fileExistsAtPath:destination] &&
+        ![files removeItemAtPath:destination error:&error]) {
+      fprintf(stderr, "error: failed to remove %s: %s\n", dst,
+              error.localizedDescription.UTF8String);
+      return 1;
+    }
+
+    error = nil;
+    if (![files copyItemAtPath:source toPath:destination error:&error]) {
+      fprintf(stderr, "error: failed to copy %s to %s: %s\n", src, dst,
+              error.localizedDescription.UTF8String);
+      return 1;
+    }
+    return 0;
+  }
 }
 
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s src dest\n", argv[0]);
-        return 1;
-    }
+int main(int argc, char *argv[]) {
+  if (argc == 3 && strcmp(argv[1], WARM_UP_DYLIB_ARG) == 0) {
+    return warm_up_dylib(argv[2]);
+  }
 
-    size_t base_size;
-    int f;
-    uint8_t *base = map(argv[1], false, &base_size, &f);
-    if (base == NULL) {
-        return 1;
-    }
+  if (argc < 3) {
+    fprintf(stderr, "usage: %s src dest\n", argv[0]);
+    return 1;
+  }
 
-    if (copy_file(argv[1], argv[2]) != 0) {
-        munmap(base, base_size);
-        close(f);
-        return 1;
-    }
+  size_t base_size;
+  int f;
+  uint8_t *base = map(argv[1], false, &base_size, &f);
+  if (base == NULL) {
+    return 1;
+  }
 
-    size_t dupe_size;
-    uint8_t *dupe = map(argv[2], true, &dupe_size, NULL);
-    if (dupe == NULL) {
-        munmap(base, base_size);
-        close(f);
-        return 1;
-    }
-
-    // If the files are not of the same size, then they are not duplicates of
-    // each other, which is an error.
-    //
-    if (base_size != dupe_size) {
-        munmap(base, base_size);
-        munmap(dupe, dupe_size);
-        return 1;
-    }
-
-    uint8_t *real_base = base;
-    size_t real_base_size = base_size;
-    uint8_t *real_dupe = dupe;
-    size_t real_dupe_size = dupe_size;
-
-    uint64_t fileoff = 0;
-    if(*(uint32_t*)base == FAT_CIGAM)
-    {
-        struct fat_header *fh = (struct fat_header*)base;
-        struct fat_arch *arch = (struct fat_arch*)(fh + 1);
-        for(size_t i = 0; i < SWAP32(fh->nfat_arch); ++i)
-        {
-            if(SWAP32(arch[i].cputype) == CPU_TYPE_ARM64 && SWAP32(arch[i].cpusubtype) == CPU_SUBTYPE_ARM64_ALL)
-            {
-                uint32_t offset = SWAP32(arch[i].offset);
-                uint32_t size = SWAP32(arch[i].size);
-                assert(offset < base_size);
-                assert(size <= base_size - offset);
-                base += offset;
-                dupe += offset;
-                base_size = size;
-                dupe_size = size;
-                fileoff = offset;
-                break;
-            }
-        }
-        if(!fileoff)
-        {
-            fprintf(stderr, "error: no arm64 slice found\n");
-            return 1;
-        }
-    }
-
-    struct mach_header_64* header = (struct mach_header_64*) base;
-    assert(header->magic == MH_MAGIC_64);
-    assert(header->cputype == CPU_TYPE_ARM64);
-    assert(header->cpusubtype == CPU_SUBTYPE_ARM64_ALL);
-
-    warm_up(argv[1], header->filetype);
-
-    uint32_t offset = sizeof(struct mach_header_64);
-
-    // Enumerate all load commands and check for the encryption header, if found
-    // start "unprotect"'ing the contents.
-    //
-    for (uint32_t i = 0; i < header->ncmds; i++) {
-        struct load_command* command = (struct load_command*) (base + offset);
-
-        if (command->cmd == LC_ENCRYPTION_INFO_64) {
-            struct encryption_info_command_64 *encryption_info =
-                (struct encryption_info_command_64*) command;
-            // If "unprotect"'ing is successful, then change the "cryptid" so that
-            // the loader does not attempt to decrypt decrypted pages.
-            //
-            if (unprotect(f, fileoff, dupe, encryption_info) != 0) {
-                fprintf(stderr, "error: failed to decrypt %s\n", argv[1]);
-                munmap(real_base, real_base_size);
-                munmap(real_dupe, real_dupe_size);
-                close(f);
-                return 1;
-            }
-            encryption_info = (struct encryption_info_command_64*) (dupe + offset);
-            encryption_info->cryptid = 0;
-            break;
-        }
-
-        offset += command->cmdsize;
-    }
-
-    munmap(real_base, real_base_size);
-    munmap(real_dupe, real_dupe_size);
+  if (copy_file(argv[1], argv[2]) != 0) {
+    munmap(base, base_size);
     close(f);
+    return 1;
+  }
 
-    puts(argv[2]);
+  size_t dupe_size;
+  uint8_t *dupe = map(argv[2], true, &dupe_size, NULL);
+  if (dupe == NULL) {
+    munmap(base, base_size);
+    close(f);
+    return 1;
+  }
 
-    return 0;
+  // If the files are not of the same size, then they are not duplicates of
+  // each other, which is an error.
+  //
+  if (base_size != dupe_size) {
+    munmap(base, base_size);
+    munmap(dupe, dupe_size);
+    return 1;
+  }
+
+  uint8_t *real_base = base;
+  size_t real_base_size = base_size;
+  uint8_t *real_dupe = dupe;
+  size_t real_dupe_size = dupe_size;
+
+  uint64_t fileoff = 0;
+  if (*(uint32_t *)base == FAT_CIGAM) {
+    struct fat_header *fh = (struct fat_header *)base;
+    struct fat_arch *arch = (struct fat_arch *)(fh + 1);
+    for (size_t i = 0; i < SWAP32(fh->nfat_arch); ++i) {
+      if (SWAP32(arch[i].cputype) == CPU_TYPE_ARM64 &&
+          SWAP32(arch[i].cpusubtype) == CPU_SUBTYPE_ARM64_ALL) {
+        uint32_t offset = SWAP32(arch[i].offset);
+        uint32_t size = SWAP32(arch[i].size);
+        assert(offset < base_size);
+        assert(size <= base_size - offset);
+        base += offset;
+        dupe += offset;
+        base_size = size;
+        dupe_size = size;
+        fileoff = offset;
+        break;
+      }
+    }
+    if (!fileoff) {
+      fprintf(stderr, "error: no arm64 slice found\n");
+      return 1;
+    }
+  }
+
+  struct mach_header_64 *header = (struct mach_header_64 *)base;
+  assert(header->magic == MH_MAGIC_64);
+  assert(header->cputype == CPU_TYPE_ARM64);
+  assert(header->cpusubtype == CPU_SUBTYPE_ARM64_ALL);
+
+  warm_up(argv[1], header->filetype);
+
+  uint32_t offset = sizeof(struct mach_header_64);
+
+  // Enumerate all load commands and check for the encryption header, if found
+  // start "unprotect"'ing the contents.
+  //
+  for (uint32_t i = 0; i < header->ncmds; i++) {
+    struct load_command *command = (struct load_command *)(base + offset);
+
+    if (command->cmd == LC_ENCRYPTION_INFO_64) {
+      struct encryption_info_command_64 *encryption_info =
+          (struct encryption_info_command_64 *)command;
+      // If "unprotect"'ing is successful, then change the "cryptid" so that
+      // the loader does not attempt to decrypt decrypted pages.
+      //
+      if (unprotect(f, fileoff, dupe, encryption_info) != 0) {
+        fprintf(stderr, "error: failed to decrypt %s\n", argv[1]);
+        munmap(real_base, real_base_size);
+        munmap(real_dupe, real_dupe_size);
+        close(f);
+        return 1;
+      }
+      encryption_info = (struct encryption_info_command_64 *)(dupe + offset);
+      encryption_info->cryptid = 0;
+      break;
+    }
+
+    offset += command->cmdsize;
+  }
+
+  munmap(real_base, real_base_size);
+  munmap(real_dupe, real_dupe_size);
+  close(f);
+
+  puts(argv[2]);
+
+  return 0;
 }
