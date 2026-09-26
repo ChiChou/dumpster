@@ -3,8 +3,6 @@ dump/
 
 decrypt/unfairplay
 wrapper/dumpster
-ios_tools/decrypt/
-ios_tools/wrapper/
 
 *.ipa
 

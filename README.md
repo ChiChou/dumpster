@@ -12,7 +12,10 @@ Jailbroken iPhone
 
 Server
 
-* macOS (uses `codesign` and `zip`)
+* macOS or Linux
+* `zip`
+* macOS: `codesign` (`security` is used only to list signing identities)
+* Linux: [`zsign`](https://github.com/zhlynn/zsign) for optional ad-hoc re-signing
 * [libimobiledevice](https://libimobiledevice.org/) and [ideviceinstaller](https://github.com/libimobiledevice/ideviceinstaller)
 * [ipatool](https://github.com/majd/ipatool) (to download IPAs from App Store)
 * Python 3.14+ and [uv](https://docs.astral.sh/uv/)
@@ -95,6 +98,10 @@ dumpster --host iphone -u DEVICE_UDID com.example.app
 ```
 
 Decrypted output is saved to `dump/<bundle_id>/`. Binaries are always kept regardless of repacking.
+
+On Linux, `--resign` uses `zsign -a`. The `--strip-codesign`, `--sign`, and
+`--sign list` features remain macOS-only because they rely on Apple's
+`codesign` and Keychain tooling.
 
 ### Repack separately
 

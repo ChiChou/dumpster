@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Decrypt IPA executables on jailbroken iOS devices"
 readme = "README.md"
 requires-python = ">=3.14"
+classifiers = [
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+]
 dependencies = [
     "setuptools>=82.0.1",
 ]

@@ -46,7 +46,7 @@ def main() -> None:
     codesign_group.add_argument(
         "--resign",
         action="store_true",
-        help="ad-hoc re-sign pulled binaries with codesign (macOS only)",
+        help="ad-hoc re-sign pulled binaries with codesign (macOS) or zsign (Linux)",
     )
     codesign_group.add_argument(
         "--sign",
@@ -82,13 +82,16 @@ def main() -> None:
 
     if args.sign == "list":
         if sys.platform != "darwin":
-            sys.exit("error: codesign is only available on macOS")
+            sys.exit("error: signing identity listing is only available on macOS")
         identities = list_codesign_identities()
         if not identities:
             sys.exit("error: no codesigning identities found in keychain")
         for ident in identities:
             print(ident)
         return
+
+    if sys.platform == "linux" and (args.strip_codesign or args.sign):
+        sys.exit("error: --strip-codesign and --sign are only available on macOS")
 
     if args.strip_codesign:
         codesign_mode: str | None = "strip"

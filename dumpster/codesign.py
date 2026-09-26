@@ -10,6 +10,9 @@ from .macho import MachO
 
 def list_codesign_identities() -> list[str]:
     """Return available signing identities from the macOS keychain."""
+    if sys.platform != "darwin":
+        return []
+
     result = subprocess.run(
         ["security", "find-identity", "-v", "-p", "codesigning"],
         capture_output=True,
@@ -25,15 +28,37 @@ def list_codesign_identities() -> list[str]:
 
 
 def codesign_binaries(outdir: str, mode: str, identity: str | None = None) -> None:
-    """Run codesign on all Mach-O files in outdir. macOS only.
+    """Update signatures on all Mach-O files in outdir.
 
     mode: 'strip' to remove signatures, 'resign' to ad-hoc sign,
           'sign' to sign with a specific identity.
-    """
-    if sys.platform != "darwin":
-        logging.warning("codesign is only available on macOS, skipping")
-        return
 
+    macOS uses codesign for every mode. Linux uses zsign for ad-hoc signing;
+    stripping and Keychain identity signing are unavailable there.
+    """
+    if sys.platform not in {"darwin", "linux"}:
+        raise RuntimeError("code signing is only supported on macOS and Linux")
+    if mode not in {"strip", "resign", "sign"}:
+        raise ValueError(f"unknown codesign mode: {mode}")
+
+    if sys.platform == "linux":
+        if mode != "resign":
+            raise RuntimeError(f"{mode} signing mode is only available on macOS")
+        action = "ad-hoc signing"
+        command = ["zsign", "-a"]
+    elif mode == "strip":
+        action = "stripping code signature"
+        command = ["codesign", "--remove-signature"]
+    elif mode == "resign":
+        action = "ad-hoc signing"
+        command = ["codesign", "-f", "-s", "-"]
+    else:
+        if identity is None:
+            raise ValueError("identity must be provided for signing")
+        action = f"signing with '{identity}'"
+        command = ["codesign", "-f", "-s", identity]
+
+    # codesign --deep only discovers nested code in macOS-style bundles
     for root, _, files in os.walk(outdir):
         for name in files:
             path = os.path.join(root, name)
@@ -41,13 +66,5 @@ def codesign_binaries(outdir: str, mode: str, identity: str | None = None) -> No
                 header = f.read(4)
             if not MachO.is_macho(header):
                 continue
-            if mode == "strip":
-                logging.info(f"stripping code signature: {path}")
-                subprocess.run(["codesign", "--remove-signature", path], check=True)
-            elif mode == "resign":
-                logging.info(f"ad-hoc signing: {path}")
-                subprocess.run(["codesign", "-f", "-s", "-", path], check=True)
-            elif mode == "sign":
-                assert identity is not None, "identity must be provided for signing"
-                logging.info(f"signing with '{identity}': {path}")
-                subprocess.run(["codesign", "-f", "-s", identity, path], check=True)
+            logging.info(f"{action}: {path}")
+            subprocess.run([*command, path], check=True)
