@@ -7,7 +7,6 @@ import sys
 
 from .core import decrypt, list_apps, process_ipa
 from .device import Device
-from .ipa import IPA
 
 
 def main() -> None:
@@ -102,38 +101,5 @@ def main() -> None:
 
     if failed:
         sys.exit(f"error: failed targets: {', '.join(failed)}")
-
-
-def repack_main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Repack IPA with decrypted binaries from dump directory"
-    )
-    parser.add_argument("ipa", nargs="+", help="original .ipa file(s)")
-    parser.add_argument(
-        "-d",
-        "--dump-dir",
-        default="dump",
-        help="base dump directory (default: dump/)",
-    )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable verbose logging"
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(message)s",
-    )
-
-    for path in args.ipa:
-        with IPA(path, "r") as ipa:
-            bundle_id = ipa.bundle_id
-            outdir = os.path.join(args.dump_dir, bundle_id)
-            if not os.path.isdir(outdir):
-                logging.error(f"no dump found for {bundle_id} at {outdir}, skipping")
-                continue
-            ipa.repack(outdir)
-
-
 if __name__ == "__main__":
     main()

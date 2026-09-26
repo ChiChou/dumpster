@@ -3,3 +3,4 @@ include agent/package.json
 include agent/package-lock.json
 include agent/dist/installd.js
 include agent/tsconfig.json
+prune tests

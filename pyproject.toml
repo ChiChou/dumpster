@@ -25,4 +25,3 @@ ios_tools = ["decrypt/*", "wrapper/*"]
 
 [project.scripts]
 dumpster = "dumpster.cli:main"
-dumpster-repack = "dumpster.cli:repack_main"

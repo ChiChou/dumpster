@@ -129,20 +129,6 @@ Decrypted output is saved to `dump/<bundle_id>/`. Binaries are always kept regar
 On the device, each binary is staged briefly under a unique `/tmp/dumpster-*`
 directory, removed after it is pulled, and cleaned up again at the end of the run.
 
-### Repack separately
-
-If you decrypted with `--no-repack` (or just want to repack again after modifying binaries), use `dumpster-repack`:
-
-```
-dumpster-repack app.ipa
-```
-
-It reads the original IPA, substitutes any Mach-O files found in `dump/<bundle_id>/`, and writes a `.decrypted.ipa`. The bundled Watch app is excluded from the repacked IPA. Use `-d` to point to a different dump directory:
-
-```
-dumpster-repack -d /path/to/dump app.ipa
-```
-
 ## SSH Setup
 
 Configure the device as an alias in `~/.ssh/config`; dumpster delegates the user,
