@@ -2,14 +2,36 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
+import uuid
 from contextlib import nullcontext
 
 from .device import Device
 from .installd import installd_hook
 from .ipa import IPA
+
+
+REMOTE_STAGING_PREFIX = "/tmp/dumpster-"
+
+
+def _remove_remote(dev: Device, path: str, *, recursive: bool = False) -> None:
+    """Best-effort removal that never masks the operation being cleaned up."""
+    option = "-rf" if recursive else "-f"
+    try:
+        result = dev.ssh("rm", option, path, check=False)
+    except Exception as error:
+        logging.warning(f"failed to remove remote staging path {path}: {error}")
+        return
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        detail = f": {stderr}" if stderr else ""
+        logging.warning(
+            f"failed to remove remote staging path {path} "
+            f"(exit {result.returncode}){detail}"
+        )
 
 
 def filter_executables(
@@ -49,43 +71,43 @@ def decrypt(
 
     executables = filter_executables(executables, app_name, all_binaries)
 
-    output = f"/var/mobile/unfairplay/{app_name}"
-    decrypted: set[str] = set()
-
-    for filename in executables:
-        tail = "/".join(filename.split("/")[1:])
-        logging.info(f"decrypting {filename}")
-        src = f"{bundle_path}/{tail}"
-        dst = f"{output}/{tail}"
-        parent_dir = dst[: dst.rfind("/")]
-
-        dev.ssh("mkdir", "-p", parent_dir)
-        dev.ssh("rm", "-f", dst)
-        result = dev.ssh(dev.tool_path("unfairplay"), src, dst, check=False)
-        if result.returncode != 0:
-            stderr = result.stderr.decode().strip()
-            logging.warning(f"unfairplay failed for {filename}: {stderr}")
-            dev.ssh("rm", "-f", dst)
-            continue
-        decrypted.add(filename)
-
-    if not decrypted:
-        sys.exit("error: no binaries were decrypted")
-
+    remote_outdir = f"{REMOTE_STAGING_PREFIX}{uuid.uuid4().hex}"
     outdir = os.path.join("dump", bundle_id)
     shutil.rmtree(outdir, ignore_errors=True)
     os.makedirs(outdir, exist_ok=True)
 
-    for filename in decrypted:
-        tail = "/".join(filename.split("/")[1:])
-        remote = f"{output}/{tail}"
-        local = os.path.join(outdir, filename)
-        os.makedirs(os.path.dirname(local), exist_ok=True)
-        dev.pull(remote, local)
+    decrypted: set[str] = set()
+    try:
+        for filename in executables:
+            tail = "/".join(filename.split("/")[1:])
+            logging.info(f"decrypting {filename}")
+            src = posixpath.join(bundle_path, tail)
+            remote = posixpath.join(remote_outdir, tail)
 
-    # pull Info.plist for context
-    plist_local = os.path.join(outdir, app_name, "Info.plist")
-    dev.pull(f"{bundle_path}/Info.plist", plist_local)
+            dev.ssh("mkdir", "-p", posixpath.dirname(remote))
+            result = dev.ssh(
+                dev.tool_path("unfairplay"), src, remote, check=False
+            )
+            if result.returncode != 0:
+                stderr = result.stderr.decode().strip()
+                logging.warning(f"unfairplay failed for {filename}: {stderr}")
+                _remove_remote(dev, remote)
+                continue
+
+            local = os.path.join(outdir, filename)
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            dev.pull(remote, local)
+            decrypted.add(filename)
+            _remove_remote(dev, remote)
+
+        if not decrypted:
+            sys.exit("error: no binaries were decrypted")
+
+        # pull Info.plist for context
+        plist_local = os.path.join(outdir, app_name, "Info.plist")
+        dev.pull(posixpath.join(bundle_path, "Info.plist"), plist_local)
+    finally:
+        _remove_remote(dev, remote_outdir, recursive=True)
 
     if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")

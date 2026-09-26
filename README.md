@@ -119,6 +119,8 @@ dumpster --host iphone -u DEVICE_UDID com.example.app
 ```
 
 Decrypted output is saved to `dump/<bundle_id>/`. Binaries are always kept regardless of repacking.
+On the device, each binary is staged briefly under a unique `/tmp/dumpster-*`
+directory, removed after it is pulled, and cleaned up again at the end of the run.
 
 ### Repack separately
 
