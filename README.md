@@ -112,6 +112,13 @@ Skip failed targets and continue with the rest:
 dumpster --host iphone -k com.example.app1 com.example.app2
 ```
 
+Uninstall each app from the device after it is successfully decrypted and any
+requested repack has completed:
+
+```
+dumpster --host iphone --uninstall app.ipa
+```
+
 Specify device UDID when multiple devices are connected:
 
 ```

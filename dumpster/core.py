@@ -50,6 +50,7 @@ def decrypt(
     ipa: IPA | None = None,
     all_binaries: bool = False,
     repack: bool = True,
+    uninstall: bool = False,
 ) -> None:
     dev.ensure_tool("unfairplay", "decrypt")
     dev.ensure_tool("dumpster", "wrapper")
@@ -111,9 +112,15 @@ def decrypt(
 
     if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")
-        return
+    else:
+        ipa.repack(outdir, decrypted)
 
-    ipa.repack(outdir, decrypted)
+    if uninstall:
+        logging.info(f"uninstalling {bundle_id}")
+        subprocess.run(
+            dev.idevice("ideviceinstaller", "uninstall", bundle_id),
+            check=True,
+        )
 
 
 def list_apps(dev: Device) -> None:
@@ -153,6 +160,7 @@ def process_ipa(
     all_binaries: bool,
     repack: bool,
     use_installd_hook: bool = True,
+    uninstall: bool = False,
 ) -> None:
     with IPA(path, "r") as ipa:
         bundle_id = ipa.bundle_id
@@ -185,4 +193,5 @@ def process_ipa(
             ipa=ipa,
             all_binaries=all_binaries,
             repack=repack,
+            uninstall=uninstall,
         )

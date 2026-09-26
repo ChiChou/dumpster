@@ -34,6 +34,11 @@ def main() -> None:
         action="store_true",
         help="install IPAs without loading the bundled Frida installd hook",
     )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="uninstall each app from the device after successful decryption",
+    )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
     parser.add_argument(
@@ -80,12 +85,14 @@ def main() -> None:
                     all_binaries=not args.no_ext,
                     repack=not args.no_repack,
                     use_installd_hook=not args.no_installd_hook,
+                    uninstall=args.uninstall,
                 )
             else:
                 decrypt(
                     dev,
                     target,
                     all_binaries=not args.no_ext,
+                    uninstall=args.uninstall,
                 )
         except Exception as e:
             logging.error(f"failed to process {target}: {e}")
