@@ -5,9 +5,11 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 
 from .codesign import codesign_binaries
 from .device import Device
+from .installd import installd_hook
 from .ipa import IPA
 
 
@@ -136,6 +138,7 @@ def process_ipa(
     repack: bool,
     codesign_mode: str | None = None,
     codesign_identity: str | None = None,
+    use_installd_hook: bool = True,
 ) -> None:
     with IPA(path, "r") as ipa:
         bundle_id = ipa.bundle_id
@@ -148,10 +151,16 @@ def process_ipa(
             logging.info(f"installing {path}")
             stripped = ipa.strip_watch_app()
             try:
-                subprocess.run(
-                    dev.idevice("ideviceinstaller", "install", stripped or path),
-                    check=True,
+                hook = (
+                    installd_hook(dev.udid)
+                    if use_installd_hook
+                    else nullcontext()
                 )
+                with hook:
+                    subprocess.run(
+                        dev.idevice("ideviceinstaller", "install", stripped or path),
+                        check=True,
+                    )
             finally:
                 if stripped:
                     os.remove(stripped)

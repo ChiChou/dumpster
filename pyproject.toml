@@ -9,6 +9,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 dependencies = [
+    "frida",
     "setuptools>=82.0.1",
 ]
 

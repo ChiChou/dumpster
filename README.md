@@ -6,7 +6,7 @@ Decrypt IPA executables on jailbroken iOS devices.
 
 Jailbroken iPhone
 
-* `installd` patch — run the [installd.js](tweak/installd.js) Frida script ([instructions](tweak/README.md))
+* `frida-server` running on the device so dumpster can patch `installd` during IPA installation
 * `unfairplay` decryptor [decrypt](decrypt/README.md)
 * `dumpster` wrapper [wrapper](wrapper/) — deployed automatically on first run
 
@@ -66,10 +66,26 @@ Decrypt from IPA files (installs if needed, then decrypts and repacks):
 dumpster --host iphone app1.ipa app2.ipa
 ```
 
-When an IPA contains a bundled Watch app, dumpster creates a temporary
-copy for installation and removes the Watch app in place with `zip -d`. The
-Frida `installd.js` hooks must remain attached while the temporary IPA is
-installed.
+Dumpster automatically attaches its bundled Frida hook to `installd` while an
+IPA is being installed. Pass `--no-installd-hook` to install without the hook.
+When an IPA contains a bundled Watch app, dumpster creates a temporary copy for
+installation and removes the Watch app in place with `zip -d`.
+
+### installd hook
+
+The bundled [Frida agent](agent/installd.ts) patches `installd` so IPAs that
+require a higher iOS version can be installed before dumpster fetches their
+decrypted executables. It disables `MinimumOSVersion` and related Info.plist
+checks, bundle metadata validation, code-signing enforcement, Watch
+verification, and resource-seal validation. The resource-seal bypass allows a
+Watch-free intermediate IPA to be installed without re-signing its binaries.
+
+The device must be jailbroken with `frida-server` running. Dumpster installs the
+required `frida` Python package and manages the hook session automatically.
+
+The agent source and Node build dependencies live in `agent/`. Run `npm install`
+there once; subsequent Python package builds compile the agent and stage the
+bundled `agent/dist/installd.js` into the wheel automatically.
 
 If all targets are existing files they are treated as IPAs, otherwise as bundle IDs.
 

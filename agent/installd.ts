@@ -1,3 +1,5 @@
+import ObjC from "frida-objc-bridge";
+
 const mod = Module.load(
   "/System/Library/PrivateFrameworks/InstalledContentLibrary.framework/InstalledContentLibrary",
 );
@@ -20,7 +22,7 @@ const keysToRemove = [
   "CFBundleSupportedPlatforms",
 ];
 
-function sanitize(retval) {
+function sanitize(retval: NativePointer) {
   if (retval.isNull()) {
     return;
   }
@@ -65,7 +67,9 @@ if (symbolLoadInfoPlistWithError) {
 // (including _validateNSExtension, _validateXPCService, delegate class, etc.)
 // validatePluginKitMetadataWithError: covers the loop-level checks (duplicates, WatchKit).
 
-const validationHooks = [
+const validationHooks: Array<
+  [className: string, selector: string, errorArgumentIndex: number]
+> = [
   // [className, selectorString, index of NSError** arg (0-based, excluding self/cmd)]
   ["MIPluginKitBundle", "- validateBundleMetadataWithError:", 0],
   ["MIExtensionKitBundle", "- validateBundleMetadataWithError:", 0],

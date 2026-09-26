@@ -30,6 +30,11 @@ def main() -> None:
         action="store_true",
         help="pull decrypted binaries without repacking into IPA",
     )
+    parser.add_argument(
+        "--no-installd-hook",
+        action="store_true",
+        help="install IPAs without loading the bundled Frida installd hook",
+    )
     parser.add_argument("-l", "--list", action="store_true", help="list installed apps")
     parser.add_argument("-u", "--udid", help="device UDID (for multiple devices)")
     parser.add_argument(
@@ -115,6 +120,7 @@ def main() -> None:
                     repack=not args.no_repack,
                     codesign_mode=codesign_mode,
                     codesign_identity=args.sign,
+                    use_installd_hook=not args.no_installd_hook,
                 )
             else:
                 decrypt(
