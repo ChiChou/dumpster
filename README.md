@@ -17,7 +17,7 @@ Server
 * macOS: `codesign` (`security` is used only to list signing identities)
 * Linux: [`zsign`](https://github.com/zhlynn/zsign) for optional ad-hoc re-signing
 * [libimobiledevice](https://libimobiledevice.org/) and [ideviceinstaller](https://github.com/libimobiledevice/ideviceinstaller)
-* [ipatool](https://github.com/majd/ipatool) (to download IPAs from App Store)
+* An encrypted App Store IPA downloaded with [ipatool](https://github.com/majd/ipatool) or [Apple Configurator](https://apps.apple.com/us/app/apple-configurator/id1037126344?mt=12)
 * Python 3.14+ and [uv](https://docs.astral.sh/uv/)
 
 ## Install
@@ -62,6 +62,11 @@ dumpster --host iphone com.example.app1 com.example.app2 com.example.app3
 
 Decrypt from IPA files (installs if needed, then decrypts and repacks):
 
+> **Note:** The input IPA must be an encrypted App Store package downloaded
+> with [ipatool](https://github.com/majd/ipatool) or Apple Configurator. Apps
+> installed directly on the device through the App Store may fail to decrypt
+> because `mremap_encrypted` has a known issue in this case.
+
 ```
 dumpster --host iphone app1.ipa app2.ipa
 ```
@@ -86,6 +91,8 @@ required `frida` Python package and manages the hook session automatically.
 The agent source and Node build dependencies live in `agent/`. Run `npm install`
 there once; subsequent Python package builds compile the agent and stage the
 bundled `agent/dist/installd.js` into the wheel automatically.
+
+### Examples
 
 If all targets are existing files they are treated as IPAs, otherwise as bundle IDs.
 
@@ -147,13 +154,13 @@ Host iphone
     ProxyCommand inetcat 22
 ```
 
-For a network connection, configure `HostName` and `Port` for the device and omit
-`ProxyCommand`. Verify that `ssh iphone` works with key authentication, then pass
-the alias to dumpster with `--host iphone`.
-
 If you have multiple devices, put the device UDID in the alias's `ProxyCommand`
 (`inetcat -u DEVICE_UDID 22`) and also pass `--udid` / `-u` so the
 libimobiledevice commands select the same device.
+
+For a network connection, configure `HostName` and `Port` for the device and omit
+`ProxyCommand`. Verify that `ssh iphone` works with key authentication, then pass
+the alias to dumpster with `--host iphone`.
 
 Device tools default to `/var/jb/bin`. Set `DUMPSTER_REMOTE_BIN` when the
 jailbreak uses a different executable directory:
