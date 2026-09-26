@@ -7,7 +7,6 @@ import subprocess
 import sys
 from contextlib import nullcontext
 
-from .codesign import codesign_binaries
 from .device import Device
 from .installd import installd_hook
 from .ipa import IPA
@@ -29,8 +28,6 @@ def decrypt(
     ipa: IPA | None = None,
     all_binaries: bool = False,
     repack: bool = True,
-    codesign_mode: str | None = None,
-    codesign_identity: str | None = None,
 ) -> None:
     dev.ensure_tool("unfairplay", "decrypt")
     dev.ensure_tool("dumpster", "wrapper")
@@ -90,9 +87,6 @@ def decrypt(
     plist_local = os.path.join(outdir, app_name, "Info.plist")
     dev.pull(f"{bundle_path}/Info.plist", plist_local)
 
-    if codesign_mode:
-        codesign_binaries(outdir, codesign_mode, identity=codesign_identity)
-
     if not ipa or not repack:
         logging.info(f"decrypted binaries saved to {outdir}")
         return
@@ -136,8 +130,6 @@ def process_ipa(
     path: str,
     all_binaries: bool,
     repack: bool,
-    codesign_mode: str | None = None,
-    codesign_identity: str | None = None,
     use_installd_hook: bool = True,
 ) -> None:
     with IPA(path, "r") as ipa:
@@ -171,6 +163,4 @@ def process_ipa(
             ipa=ipa,
             all_binaries=all_binaries,
             repack=repack,
-            codesign_mode=codesign_mode,
-            codesign_identity=codesign_identity,
         )

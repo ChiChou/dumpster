@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 
-from .codesign import list_codesign_identities
 from .core import decrypt, list_apps, process_ipa
 from .device import Device
 from .ipa import IPA
@@ -42,22 +41,6 @@ def main() -> None:
         metavar="ALIAS",
         help="SSH host alias configured in ~/.ssh/config",
     )
-    codesign_group = parser.add_mutually_exclusive_group()
-    codesign_group.add_argument(
-        "--strip-codesign",
-        action="store_true",
-        help="strip code signatures from pulled binaries (macOS only)",
-    )
-    codesign_group.add_argument(
-        "--resign",
-        action="store_true",
-        help="ad-hoc re-sign pulled binaries with codesign (macOS) or zsign (Linux)",
-    )
-    codesign_group.add_argument(
-        "--sign",
-        metavar="IDENTITY",
-        help="sign pulled binaries with a developer identity (macOS only, use 'list' to show available identities)",
-    )
     parser.add_argument(
         "-k",
         "--skip-errors",
@@ -85,28 +68,6 @@ def main() -> None:
 
     dev = Device(args.host, udid=args.udid)
 
-    if args.sign == "list":
-        if sys.platform != "darwin":
-            sys.exit("error: signing identity listing is only available on macOS")
-        identities = list_codesign_identities()
-        if not identities:
-            sys.exit("error: no codesigning identities found in keychain")
-        for ident in identities:
-            print(ident)
-        return
-
-    if sys.platform == "linux" and (args.strip_codesign or args.sign):
-        sys.exit("error: --strip-codesign and --sign are only available on macOS")
-
-    if args.strip_codesign:
-        codesign_mode: str | None = "strip"
-    elif args.resign:
-        codesign_mode = "resign"
-    elif args.sign:
-        codesign_mode = "sign"
-    else:
-        codesign_mode = None
-
     ipa_mode = all(os.path.isfile(t) for t in args.targets)
 
     failed: list[str] = []
@@ -118,8 +79,6 @@ def main() -> None:
                     target,
                     all_binaries=not args.no_ext,
                     repack=not args.no_repack,
-                    codesign_mode=codesign_mode,
-                    codesign_identity=args.sign,
                     use_installd_hook=not args.no_installd_hook,
                 )
             else:
@@ -127,8 +86,6 @@ def main() -> None:
                     dev,
                     target,
                     all_binaries=not args.no_ext,
-                    codesign_mode=codesign_mode,
-                    codesign_identity=args.sign,
                 )
         except Exception as e:
             logging.error(f"failed to process {target}: {e}")
